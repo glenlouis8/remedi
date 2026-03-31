@@ -1,0 +1,62 @@
+# --- PYTHON ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.log
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+htmlcov/
+*.sqlite3
+
+
+# --- ENVIRONMENT VARIABLES (CRITICAL) ---
+.env
+.env.local
+.env.*
+
+# --- TERRAFORM ---
+# Exclude the .terraform directory (plugins/modules)
+.terraform/
+# Exclude state files (contain sensitive resource IDs)
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.lock.hcl
+plan.out
+
+# --- OS GENERATED ---
+.DS_Store
+Thumbs.db
+
+# --- CLAUDE CODE ---
+CLAUDE.md
+
+# --- PROJECT SPECIFIC ---
+PRODUCT_PLAN.md
+REMEDI_HANDOFF.md
+
+# Exclude the local database (we want a fresh DB for each deployment)
+aegis_state.db
+
+# Exclude the PEM key for EC2 (if you have it locally)
+*.pem
+
+env_vars.yaml
+
+# Exclude PDF artifacts (interview prep, codebase guides, etc.)
+*.pdf
+
+# Exclude uv virtual environment
+.venv/
+uv.lock
+
+docs/
