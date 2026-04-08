@@ -42,8 +42,10 @@ def run_interactive_session():
                         sender = (
                             "AUDITOR" if "Auditor" in str(message.content) else "AGENT"
                         )
-                        text_to_print = str(message.content)
-
+                        if isinstance(message.content, list):
+                            text_to_print = " ".join(p.get("text", "") for p in message.content if isinstance(p, dict)).strip()
+                        else:
+                            text_to_print = str(message.content)
                     else:
                         sender = "USER"
                         text_to_print = message.content
@@ -129,7 +131,10 @@ def run_interactive_session():
             for tc in tool_calls:
                 print(f"\n[{label}]: 🛠️  EXECUTING CHECK: {tc['name']}...")
         else:
-            text_to_print = str(message.content)
+            if isinstance(message.content, list):
+                text_to_print = " ".join(p.get("text", "") for p in message.content if isinstance(p, dict)).strip()
+            else:
+                text_to_print = str(message.content)
 
             # Skip messages we've already seen or that aren't from the AI
             if not isinstance(message, AIMessage):

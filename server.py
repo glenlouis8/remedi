@@ -3,19 +3,22 @@ import os
 import sys
 import signal
 import threading
-import queue
 import time
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from mcp_server.database import (
     reset_to_vulnerable, get_all_status, init_db,
     get_scan_history, get_remediation_breakdown, get_connection,
+    purge_expired_credentials,
 )
 from remedi_platform.auth import get_current_user
-from remedi_platform.accounts import save_aws_credentials, get_aws_credentials, has_aws_account
+from remedi_platform.accounts import (
+    save_aws_credentials, get_aws_credentials, has_aws_account,
+    delete_aws_credentials, list_aws_accounts, count_aws_accounts,
+)
 from remedi_platform.compliance import get_cis_score
 
 app = FastAPI()
@@ -43,11 +46,22 @@ for i in range(max_retries):
         time.sleep(2)
 
 
+# --- CREDENTIAL EXPIRY (30 min inactivity) ---
+def _credential_purge_loop():
+    while True:
+        time.sleep(300)  # check every 5 minutes
+        try:
+            purge_expired_credentials()
+        except Exception as e:
+            print(f"⚠️  Credential purge error: {e}")
+
+threading.Thread(target=_credential_purge_loop, daemon=True).start()
+
+
 # --- AGENT PROCESS MANAGER ---
 class ProcessManager:
     def __init__(self):
         self.process = None
-        self.output_queue = queue.Queue()
         self.is_running = False
         self.waiting_for_approval = False
 
@@ -73,19 +87,19 @@ class ProcessManager:
         self.is_running = True
         self.waiting_for_approval = False
 
-        t = threading.Thread(target=self._read_output)
-        t.daemon = True
-        t.start()
-
-    def _read_output(self):
-        for line in iter(self.process.stdout.readline, ""):
-            if line:
-                if "PAUSING FOR HUMAN REVIEW" in line:
-                    self.waiting_for_approval = True
-                    self.output_queue.put("[ACTION_REQUIRED] WAITING_FOR_APPROVAL")
-                self.output_queue.put(line)
-        self.process.stdout.close()
-        self.is_running = False
+    def stream_output(self):
+        """Generator: yields stdout lines from the agent subprocess to the HTTP response."""
+        try:
+            for line in iter(self.process.stdout.readline, ""):
+                if line:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                    if "PAUSING FOR HUMAN REVIEW" in line:
+                        self.waiting_for_approval = True
+                    yield line
+        finally:
+            self.process.stdout.close()
+            self.is_running = False
 
     def send_approval(self):
         if self.process and self.waiting_for_approval:
@@ -97,13 +111,6 @@ class ProcessManager:
             except (OSError, BrokenPipeError):
                 self.waiting_for_approval = False
         return False
-
-    def stream_logs(self):
-        while self.is_running or not self.output_queue.empty():
-            try:
-                yield self.output_queue.get(timeout=1)
-            except queue.Empty:
-                continue
 
 
 # One manager per user session (keyed by user_id)
@@ -128,10 +135,12 @@ signal.signal(signal.SIGTERM, handle_sigterm)
 
 # --- SCHEMAS ---
 class AWSCredentials(BaseModel):
+    account_name: str = 'Default'
     access_key: str
     secret_key: str
 
 class RunAgentRequest(BaseModel):
+    account_name: str = 'Default'
     protected_users: list[str] = []
 
 
@@ -141,8 +150,22 @@ class RunAgentRequest(BaseModel):
 def connect_aws(creds: AWSCredentials, user: dict = Depends(get_current_user)):
     if not creds.access_key.startswith("AKIA") or len(creds.access_key) != 20:
         raise HTTPException(status_code=400, detail="Invalid AWS Access Key format")
-    save_aws_credentials(user["sub"], creds.access_key, creds.secret_key)
-    return {"status": "connected"}
+    if not creds.account_name.strip():
+        raise HTTPException(status_code=400, detail="Account name cannot be empty")
+    user_id = user["sub"]
+    existing = count_aws_accounts(user_id)
+    # Allow upsert on existing account name; only block if it's a brand-new name and already at 3
+    accounts = list_aws_accounts(user_id)
+    is_new = not any(a["account_name"] == creds.account_name for a in accounts)
+    if is_new and existing >= 3:
+        raise HTTPException(status_code=400, detail="Maximum of 3 AWS accounts allowed per user")
+    save_aws_credentials(user_id, creds.account_name.strip(), creds.access_key, creds.secret_key)
+    return {"status": "connected", "account_name": creds.account_name.strip()}
+
+
+@app.get("/api/accounts")
+def list_accounts(user: dict = Depends(get_current_user)):
+    return list_aws_accounts(user["sub"])
 
 
 @app.get("/api/accounts/status")
@@ -150,10 +173,22 @@ def account_status(user: dict = Depends(get_current_user)):
     return {"connected": has_aws_account(user["sub"])}
 
 
+@app.delete("/api/accounts")
+def disconnect_all(user: dict = Depends(get_current_user)):
+    delete_aws_credentials(user["sub"])
+    return {"status": "disconnected"}
+
+
+@app.delete("/api/accounts/{account_name}")
+def disconnect_one(account_name: str, user: dict = Depends(get_current_user)):
+    delete_aws_credentials(user["sub"], account_name)
+    return {"status": "disconnected", "account_name": account_name}
+
+
 @app.get("/api/iam/users")
-def list_iam_users(user: dict = Depends(get_current_user)):
+def list_iam_users(account_name: str = "Default", user: dict = Depends(get_current_user)):
     import boto3, botocore.exceptions
-    creds = get_aws_credentials(user["sub"])
+    creds = get_aws_credentials(user["sub"], account_name)
     if not creds:
         raise HTTPException(status_code=400, detail="No AWS account connected.")
     try:
@@ -268,7 +303,7 @@ def get_breakdown(user: dict = Depends(get_current_user)):
 @app.post("/api/run-agent")
 def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     user_id = user["sub"]
-    creds = get_aws_credentials(user_id)
+    creds = get_aws_credentials(user_id, body.account_name)
     if not creds:
         raise HTTPException(status_code=400, detail="No AWS account connected. Please complete onboarding first.")
 
@@ -294,7 +329,8 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
 
     manager = _get_manager(user_id)
     manager.start_agent(env)
-    return StreamingResponse(manager.stream_logs(), media_type="text/plain")
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(manager.stream_output(), media_type="text/plain")
 
 
 @app.post("/api/approve")

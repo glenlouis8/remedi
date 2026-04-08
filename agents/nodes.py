@@ -1,7 +1,9 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 import json
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 from agents.state import AgentState
@@ -45,55 +47,209 @@ remediation_llm = llm.bind_tools(remediation_tools_list)
 # --- NODES ---
 
 
-def auditor_agent(state: AgentState):
+
+def _run_sub_agent(service: str, prompt: str, tools: list, protected_clause: str) -> tuple:
     """
-    Phase 1: Discovery & Forensics.
+    Runs a single specialist sub-agent synchronously inside a thread.
+    Handles its own tool loop and Gemini rate-limit retries.
+    Returns (service_name, findings_text, total_tokens).
     """
-    print("--- [NODE] AUDITOR AGENT ---")
-    messages = state["messages"]
+    llm_with_tools = llm.bind_tools(tools)
+    messages = [
+        SystemMessage(content=prompt + protected_clause),
+        HumanMessage(content="Begin your audit now."),
+    ]
+    total_tokens = 0
+
+    while True:
+        for attempt in range(3):
+            try:
+                response = llm_with_tools.invoke(messages)
+                break
+            except Exception as e:
+                if "429" in str(e) and attempt < 2:
+                    print(f"[{service}] Rate limited — retrying in 10s ({attempt + 1}/2)...")
+                    time.sleep(10)
+                else:
+                    raise
+
+        messages.append(response)
+        tokens = (response.usage_metadata or {}).get("total_tokens", 0) if hasattr(response, "usage_metadata") else 0
+        total_tokens += tokens
+
+        if not response.tool_calls:
+            break
+
+        for tc in response.tool_calls:
+            tool = _tools_by_name.get(tc["name"])
+            if tool:
+                try:
+                    result = tool.invoke(tc["args"])
+                    messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"], name=tc["name"]))
+                except Exception as e:
+                    messages.append(ToolMessage(content=f"Error: {e}", tool_call_id=tc["id"], name=tc["name"]))
+            else:
+                messages.append(ToolMessage(content=f"Unknown tool: {tc['name']}", tool_call_id=tc["id"], name=tc["name"]))
+
+    if isinstance(response.content, list):
+        text = " ".join(p.get("text", "") for p in response.content if isinstance(p, dict)).strip()
+    else:
+        text = str(response.content)
+
+    return service, text, total_tokens
+
+
+_SPECIALIST_CONFIGS = [
+    {
+        "service": "IAM",
+        "tool_names": {"get_agent_identity", "list_iam_users", "list_attached_user_policies", "get_resource_owner"},
+        "prompt": (
+            "You are an IAM security specialist. Audit this AWS account's IAM configuration.\n"
+            "1. Call `list_iam_users` to get all users.\n"
+            "2. Call `list_attached_user_policies` for EVERY user found.\n"
+            "3. Flag any user with AdministratorAccess or PowerUserAccess as CRITICAL.\n"
+            "Return a concise findings summary. If nothing is wrong, say 'IAM: No issues found.'"
+        ),
+    },
+    {
+        "service": "S3",
+        "tool_names": {"list_s3_buckets", "check_s3_security"},
+        "prompt": (
+            "You are an S3 security specialist. Audit this AWS account's S3 buckets.\n"
+            "1. Call `list_s3_buckets` to get all buckets.\n"
+            "2. Call `check_s3_security` for each bucket.\n"
+            "3. Flag any publicly accessible bucket as CRITICAL.\n"
+            "Return a concise findings summary. If nothing is wrong, say 'S3: No issues found.'"
+        ),
+    },
+    {
+        "service": "VPC",
+        "tool_names": {"audit_vpc_network"},
+        "prompt": (
+            "You are a VPC network security specialist. Audit this AWS account's VPC configuration.\n"
+            "1. Call `audit_vpc_network`.\n"
+            "2. Flag any VPC with flow logs disabled as HIGH severity.\n"
+            "Return a concise findings summary. If nothing is wrong, say 'VPC: No issues found.'"
+        ),
+    },
+    {
+        "service": "Security Groups",
+        "tool_names": {"audit_security_groups"},
+        "prompt": (
+            "You are a network security specialist. Audit this AWS account's security groups.\n"
+            "1. Call `audit_security_groups`.\n"
+            "2. Flag any group allowing 0.0.0.0/0 inbound access as HIGH severity.\n"
+            "Return a concise findings summary. If nothing is wrong, say 'Security Groups: No issues found.'"
+        ),
+    },
+    {
+        "service": "EC2",
+        "tool_names": {"audit_ec2_vulnerabilities"},
+        "prompt": (
+            "You are an EC2 security specialist. Audit this AWS account's EC2 instances.\n"
+            "1. Call `audit_ec2_vulnerabilities`.\n"
+            "2. Flag instances with IMDSv1 enabled or unencrypted root volumes.\n"
+            "Return a concise findings summary. If nothing is wrong, say 'EC2: No issues found.'"
+        ),
+    },
+    {
+        "service": "RDS",
+        "tool_names": {"audit_rds_instances"},
+        "prompt": (
+            "You are an RDS security specialist. Audit this AWS account's RDS databases.\n"
+            "1. Call `audit_rds_instances`.\n"
+            "2. Flag any publicly accessible database as CRITICAL.\n"
+            "Return a concise findings summary. If nothing is wrong, say 'RDS: No issues found.'"
+        ),
+    },
+    {
+        "service": "Lambda",
+        "tool_names": {"audit_lambda_permissions"},
+        "prompt": (
+            "You are a Lambda security specialist. Audit this AWS account's Lambda functions.\n"
+            "1. Call `audit_lambda_permissions`.\n"
+            "2. Flag any function with an over-permissioned execution role.\n"
+            "Return a concise findings summary. If nothing is wrong, say 'Lambda: No issues found.'"
+        ),
+    },
+    {
+        "service": "CloudTrail",
+        "tool_names": {"audit_cloudtrail_logging"},
+        "prompt": (
+            "You are a CloudTrail security specialist. Audit this AWS account's logging configuration.\n"
+            "1. Call `audit_cloudtrail_logging`.\n"
+            "2. Flag if logging is disabled or no trails exist.\n"
+            "Return a concise findings summary. If nothing is wrong, say 'CloudTrail: No issues found.'"
+        ),
+    },
+]
+
+
+def orchestrator_node(state: AgentState):
+    """
+    Phase 1: Parallel Discovery.
+    Fires 8 specialist sub-agents simultaneously — one per AWS service.
+    Merges their findings into a single report for the Report Generator.
+    """
+    print("--- [NODE] ORCHESTRATOR (parallel scan) ---")
 
     protected_raw = os.environ.get("PROTECTED_IAM_USERS", "").strip()
     protected_users = [u.strip() for u in protected_raw.split(",") if u.strip()] if protected_raw else []
     protected_clause = (
-        f"\n\nPROTECTED RESOURCES — the account owner has marked the following IAM users/roles as admin accounts that must never be flagged or remediated. "
-        f"Skip them entirely during audit:\n" + "\n".join(f"  - {u}" for u in protected_users)
+        "\n\nPROTECTED: The following IAM users are marked as admin accounts by the account owner. "
+        "Skip them entirely — do not flag or report on them:\n"
+        + "\n".join(f"  - {u}" for u in protected_users)
         if protected_users else ""
     )
 
-    system_msg = SystemMessage(
-        content=(
-            "You are a cloud security auditor. Your job is to scan this AWS account for security vulnerabilities and report findings clearly.\n\n"
-            "SCAN THESE SERVICES IN ORDER:\n"
-            "1. IAM — call `list_iam_users`, then `list_attached_user_policies` for EVERY user found. "
-            "Flag any user with AdministratorAccess or PowerUserAccess as a CRITICAL finding.\n"
-            "2. S3 — call `list_s3_buckets`, then `check_s3_security` for each bucket. Flag any publicly accessible bucket.\n"
-            "3. VPC — call `audit_vpc_network`. Flag any VPC with flow logs disabled.\n"
-            "4. Security Groups — call `audit_security_groups`. Flag any group allowing 0.0.0.0/0 inbound access.\n"
-            "5. EC2 — call `audit_ec2_vulnerabilities`. Flag instances with IMDSv1 enabled or unencrypted root volumes.\n"
-            "6. RDS — call `audit_rds_instances`. Flag any publicly accessible database.\n"
-            "7. Lambda — call `audit_lambda_permissions`. Flag any function with an over-permissioned execution role.\n"
-            "8. CloudTrail — call `audit_cloudtrail_logging`. Flag if logging is disabled or no trails exist.\n\n"
-            "For each finding, note the resource name, service, and what the risk is. "
-            "Be factual and concise. Do not invent findings."
-            + protected_clause
-        )
-    )
-
-    # Ensure system message is first
-    if not messages or not isinstance(messages[0], SystemMessage):
-        messages = [system_msg] + messages
-
-    # Start the scan in DB
     scan_id = state.get("scan_id", "UNKNOWN")
     start_scan(scan_id)
 
-    response = audit_llm.invoke(messages)
-    
-    # TELEMETRY: Tokens
-    tokens = response.usage_metadata.get("total_tokens", 0) if hasattr(response, "usage_metadata") and response.usage_metadata else 0
-    update_scan(scan_id, total_tokens=state.get("total_tokens", 0) + tokens)
+    tasks = [
+        (
+            config["service"],
+            config["prompt"],
+            [t for t in audit_tools_list if t.name in config["tool_names"]],
+            protected_clause,
+        )
+        for config in _SPECIALIST_CONFIGS
+    ]
 
-    return {"messages": [response], "total_tokens": tokens}
+    _SVC_KEY = {
+        "IAM": "iam", "S3": "s3", "VPC": "vpc", "Security Groups": "sg",
+        "EC2": "ec2", "RDS": "rds", "Lambda": "lambda", "CloudTrail": "cloudtrail",
+    }
+
+    findings: dict[str, str] = {}
+    total_tokens = 0
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(_run_sub_agent, *task): task[0] for task in tasks}
+        for future in as_completed(futures):
+            service = futures[future]
+            try:
+                svc, text, tokens = future.result()
+                findings[svc] = text
+                total_tokens += tokens
+                svc_key = _SVC_KEY.get(svc, svc.lower())
+                has_issues = any(kw in text.upper() for kw in ["CRITICAL", "VULNERABLE", "VIOLATION", "EXPOSED", "PUBLIC", "WARNING", "RISK"])
+                status = "vulnerable" if has_issues else "ok"
+                first_line = next((l.strip() for l in text.split("\n") if l.strip() and len(l.strip()) > 10), "Scan complete")
+                print(f"[SCAN] {json.dumps({'service': svc_key, 'resource': svc, 'status': status, 'msg': first_line[:120]})}", flush=True)
+            except Exception as e:
+                findings[service] = f"{service}: scan failed — {e}"
+                svc_key = _SVC_KEY.get(service, service.lower())
+                print(f"[SCAN] {json.dumps({'service': svc_key, 'resource': service, 'status': 'error', 'msg': str(e)[:120]})}", flush=True)
+
+    order = ["IAM", "S3", "VPC", "Security Groups", "EC2", "RDS", "Lambda", "CloudTrail"]
+    combined = "\n\n".join(
+        f"=== {svc} ===\n{findings.get(svc, 'No data.')}" for svc in order
+    )
+
+    update_scan(scan_id, total_tokens=total_tokens)
+    print(f"[ORCHESTRATOR] All services scanned. Total tokens: {total_tokens}")
+
+    return {"messages": [AIMessage(content=combined)], "total_tokens": total_tokens}
 
 
 def report_generator_node(state: AgentState):
@@ -145,7 +301,12 @@ def report_generator_node(state: AgentState):
     tokens = response.usage_metadata.get("total_tokens", 0) if hasattr(response, "usage_metadata") and response.usage_metadata else 0
     scan_id = state.get("scan_id", "UNKNOWN")
 
-    clean_content = str(response.content)
+    if isinstance(response.content, list):
+        clean_content = " ".join(
+            part.get("text", "") for part in response.content if isinstance(part, dict)
+        ).strip()
+    else:
+        clean_content = str(response.content)
     # Count unique tool calls in the plan (not 🔴 symbols — the same tool can be
     # mentioned multiple times for the same resource e.g. restrict_iam_user for
     # both the policy violation and insider threat finding on the same user)
@@ -178,6 +339,7 @@ def safety_gate_node(state: AgentState):
 
     print(f"\n>>> AUDIT COMPLETE. FINDINGS: \n{summary_str}\n")
     print(">>> PAUSING FOR HUMAN REVIEW. (Remediation will strictly NOT proceed without approval).")
+    print("[ACTION_REQUIRED] WAITING_FOR_APPROVAL", flush=True)
     return {}
 
 
@@ -230,102 +392,78 @@ def remediator_agent(state: AgentState):
         "fix_cloudtrail": "remediate_cloudtrail",
     }
 
-    # 4. PARSE PLAN
-    parser_prompt = SystemMessage(
-        content=(
-            "You are a strict JSON-only plan parser. Convert the remediation plan into a JSON object.\n\n"
-            "CRITICAL RULES:\n"
-            "- Output ONLY raw JSON. No markdown, no code blocks, no explanation.\n"
-            "- Use ONLY tool names from this exact list: " + ", ".join(INTENT_MAP.keys()) + "\n\n"
-            "Output format:\n"
-            '{"tools": [{"name": "<tool_name>", "args": {"<arg_name>": "<arg_value>"}}]}\n\n'
-            "Exact argument names per tool:\n"
-            "- restrict_iam_user: {\"user_name\": \"<username>\"}\n"
-            "- remediate_s3: {\"bucket_name\": \"<bucket>\"}\n"
-            "- remediate_vpc_flow_logs: {\"vpc_id\": \"<vpc-id>\"}\n"
-            "- revoke_security_group_ingress: {\"group_id\": \"<sg-id>\", \"protocol\": \"tcp\", \"from_port\": 22, \"to_port\": 22}\n"
-            "- enforce_imdsv2: {\"instance_id\": \"<instance-id>\"}\n"
-            "- stop_instance: {\"instance_id\": \"<instance-id>\"}\n"
-        )
-    )
+    # 4. TOOL → ARGUMENT KEY MAP
+    # Maps each tool name to the arg name its resource goes into
+    TOOL_ARG_MAP = {
+        "restrict_iam_user":           "user_name",
+        "remediate_s3":                "bucket_name",
+        "remediate_vpc_flow_logs":     "vpc_id",
+        "revoke_security_group_ingress": "group_id",
+        "enforce_imdsv2":              "instance_id",
+        "stop_instance":               "instance_id",
+        "remediate_rds_public_access": "db_instance_identifier",
+        "remediate_lambda_role":       "function_name",
+        "remediate_cloudtrail":        "trail_name",
+    }
 
-    # Pass only the audit summary — no need for the full message history
-    parser_input = HumanMessage(content=f"REMEDIATION PLAN TO PARSE:\n{summary}")
+    scan_id = state.get("scan_id", "UNKNOWN")
 
     try:
-        scan_id = state.get("scan_id", "UNKNOWN")
-        raw_response = llm.invoke([parser_prompt, parser_input])
+        # 5. REGEX PARSE — no LLM call, no JSON, no latency
+        import re
+        pattern = re.compile(
+            r'🔴 \[CRITICAL\] (.+?) is vulnerable -> ACTION: I will call [`\'"]?(\w+)[`\'"]?'
+        )
+        tasks = []
+        for match in pattern.finditer(summary):
+            resource  = match.group(1).strip()
+            tool_name = match.group(2).strip()
+            real_name = INTENT_MAP.get(tool_name, tool_name)
+            func      = FUNCTION_DISPATCH.get(real_name)
+            arg_key   = TOOL_ARG_MAP.get(real_name)
+            tasks.append((resource, real_name, func, {arg_key: resource} if arg_key else {}))
 
-        # TELEMETRY: Tokens
-        tokens = raw_response.usage_metadata.get("total_tokens", 0) if hasattr(raw_response, "usage_metadata") and raw_response.usage_metadata else 0
-        update_scan(scan_id, total_tokens=state.get("total_tokens", 0) + tokens)
+        print(f"[DEBUG] Parsed {len(tasks)} tasks. Starting parallel execution...")
 
-        # Extract the JSON object — handles markdown wrappers and surrounding text
-        raw_text = str(raw_response.content)
-        start = raw_text.find("{")
-        end = raw_text.rfind("}") + 1
-        raw_text = raw_text[start:end] if start != -1 else raw_text
-
-        plan_json = json.loads(raw_text)
+        # 6. PARALLEL EXECUTION
+        def _run_task(resource, real_name, func, args):
+            start_time = datetime.datetime.now()
+            if func is None:
+                return resource, real_name, args, f"⚠️ Unknown tool: {real_name}", "UNKNOWN_TOOL", 0.0
+            if "security_group_id" in args:
+                args["group_id"] = args.pop("security_group_id")
+            valid_args = {k: v for k, v in args.items() if k in func.args}
+            print(f"[EXEC] Calling {real_name} with {valid_args}...")
+            try:
+                result_str = func.invoke(valid_args)
+                duration = (datetime.datetime.now() - start_time).total_seconds()
+                return resource, real_name, args, f"✅ {result_str}", "SUCCESS", duration
+            except Exception as e:
+                duration = (datetime.datetime.now() - start_time).total_seconds()
+                return resource, real_name, args, f"❌ {real_name}: {str(e)}", "ERROR", duration
 
         results = []
         success_count = 0
 
-        # 5. EXECUTION LOOP
-        tool_list = plan_json.get("tools", [])
-        print(f"[DEBUG] Found {len(tool_list)} tasks. Starting direct execution...")
-
-        for task in tool_list:
-            ai_name = task["name"]
-            args = task["args"]
-            start_time = datetime.datetime.now()
-
-            # Resolve to actual function
-            real_func_name = INTENT_MAP.get(ai_name, ai_name)
-            func_to_call = FUNCTION_DISPATCH.get(real_func_name)
-
-            if "security_group_id" in args:
-                args["group_id"] = args.pop("security_group_id")
-
-            # --- ARGUMENT PATCHING FOR SECURITY GROUPS ---
-            if real_func_name == "revoke_security_group_ingress":
-                args.pop("cidr_ip", None)
-                # Ensure required args exist, defaulting to standard SSH suppression
-                if "protocol" not in args:
-                    args["protocol"] = "tcp"
-                if "from_port" not in args:
-                    args["from_port"] = 22
-                if "to_port" not in args:
-                    args["to_port"] = 22
-            # ---------------------------------------------
-
-            if func_to_call:
-                # Filter args against the tool's MCP schema to drop any hallucinated keys
-                valid_args = {k: v for k, v in args.items() if k in func_to_call.args}
-
-                print(f"[EXEC] Calling {real_func_name} with {valid_args}...")
-                try:
-                    # Call the tool via the MCP protocol (JSON-RPC over stdio)
-                    result_str = func_to_call.invoke(valid_args)
-                    results.append(f"✅ {result_str}")
+        with ThreadPoolExecutor(max_workers=max(len(tasks), 1)) as executor:
+            futures = [executor.submit(_run_task, *t) for t in tasks]
+            for future in as_completed(futures):
+                resource, real_name, args, message, status, duration = future.result()
+                results.append(message)
+                if status == "SUCCESS":
                     success_count += 1
-                    status = "SUCCESS"
-                except Exception as e:
-                    results.append(f"❌ Error executing {real_func_name}: {str(e)}")
-                    status = "ERROR"
-            else:
-                results.append(f"⚠️ Unknown tool mapping: {ai_name}")
-                status = "UNKNOWN_TOOL"
-            
-            # TELEMETRY: Log Remediation Event
-            duration = (datetime.datetime.now() - start_time).total_seconds()
-            resource = args.get("bucket_name") or args.get("instance_id") or args.get("vpc_id") or args.get("group_id") or "unspecified"
-            log_remediation(scan_id, resource, real_func_name, status, duration)
+                resource_id = (
+                    args.get("user_name") or args.get("bucket_name") or
+                    args.get("instance_id") or args.get("vpc_id") or
+                    args.get("group_id") or args.get("db_instance_identifier") or
+                    args.get("function_name") or resource
+                )
+                log_remediation(scan_id, resource_id, real_name, status, duration)
 
-        # 6. REPORTING
+        # 7. REPORTING
         update_scan(scan_id, remediations_count=success_count)
         full_summary = "### 🛠️ REMEDIATION REPORT\n" + "\n".join(results)
-        return {"messages": [AIMessage(content=full_summary)], "total_tokens": tokens}
+        return {"messages": [AIMessage(content=full_summary)], "total_tokens": 0}
 
     except Exception as e:
         print(f"[ERROR] Remediation failure: {e}")
@@ -344,10 +482,12 @@ def verifier_agent(state: AgentState):
     system_msg = SystemMessage(
         content=(
             "You are a security verifier. Your job is to confirm that the remediation steps were successful.\n"
-            "1. Review the remediation report to see what was fixed.\n"
-            "2. Re-run the relevant audit tools to check the current state of those resources.\n"
-            "3. If any vulnerability still exists, report it as a 'VERIFICATION FAILURE' with details.\n"
-            "4. If all fixes are confirmed, respond with exactly:\n"
+            "1. Read the remediation report carefully to identify exactly which resources were fixed.\n"
+            "2. Re-run audit tools ONLY for those specific resources — do NOT scan anything else.\n"
+            "   Only use resource names and IDs that appear in the remediation report.\n"
+            "   Never invent or guess resource names.\n"
+            "3. If a fixed resource is still vulnerable, report 'VERIFICATION FAILURE' with details.\n"
+            "4. If every fixed resource is now clean, respond with exactly:\n"
             "'🏆 MISSION ACCOMPLISHED. All resources verified as SECURE.'"
         )
     )
@@ -360,8 +500,15 @@ def verifier_agent(state: AgentState):
          if isinstance(m, AIMessage) and "REMEDIATION REPORT" in str(m.content)),
         None
     )
-    context = messages[report_idx:] if report_idx is not None else (messages[-1:] if messages else [HumanMessage(content="No remediation report found.")])
 
+    # If the remediator failed, there's nothing to verify — exit immediately
+    if report_idx is None:
+        scan_id = state.get("scan_id", "UNKNOWN")
+        end_time = datetime.datetime.now().isoformat()
+        update_scan(scan_id, status="FAILED", end_time=end_time)
+        return {"messages": [AIMessage(content="VERIFICATION SKIPPED: Remediator failed — no fixes were applied.")]}
+
+    context = messages[report_idx:]
     response = audit_llm.invoke([system_msg] + context)
     
     # TELEMETRY: Tokens

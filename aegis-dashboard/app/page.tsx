@@ -26,6 +26,8 @@ export default function HomePage() {
           <span className="font-semibold tracking-tight text-slate-900">Remedi</span>
         </div>
         <div className="flex items-center gap-4">
+          <Link href="/docs" className="text-sm text-slate-500 hover:text-slate-900 transition-colors">Docs</Link>
+          <Link href="/about" className="text-sm text-slate-500 hover:text-slate-900 transition-colors">About</Link>
           {isSignedIn ? (
             <>
               <Link

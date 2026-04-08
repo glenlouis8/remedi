@@ -55,6 +55,30 @@ body {
   animation: shimmer 1.8s linear infinite;
 }
 
+@keyframes success-enter {
+  0%   { opacity: 0; transform: scale(0.88) translateY(10px); }
+  100% { opacity: 1; transform: scale(1)    translateY(0); }
+}
+
+@keyframes ring-out {
+  0%   { transform: scale(0.9); opacity: 0.5; }
+  100% { transform: scale(2.4); opacity: 0;   }
+}
+
+@keyframes draw-check {
+  0%   { stroke-dashoffset: 60; }
+  100% { stroke-dashoffset: 0;  }
+}
+
+@keyframes fade-slide-up {
+  0%   { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0);    }
+}
+
+.success-card   { animation: success-enter 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+.ring-out       { animation: ring-out 2s ease-out infinite; }
+.fade-slide-up  { animation: fade-slide-up 0.4s ease-out forwards; opacity: 0; }
+
 @layer utilities {
   .scrollbar-hide {
     /* IE and Edge */

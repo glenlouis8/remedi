@@ -35,7 +35,10 @@ def _make_sync_tool(mcp_tool) -> StructuredTool:
             mcp_tool.ainvoke(kwargs),
             _loop,
         )
-        return str(future.result(timeout=60))
+        result = future.result(timeout=60)
+        if isinstance(result, list):
+            return " ".join(p.get("text", "") for p in result if isinstance(p, dict)).strip()
+        return str(result)
 
     return StructuredTool(
         name=mcp_tool.name,

@@ -352,28 +352,40 @@ def audit_security_groups() -> list:
 
 
 @mcp.tool()
-def revoke_security_group_ingress(
-    group_id: str, protocol: str, from_port: int, to_port: int
-) -> str:
+def revoke_security_group_ingress(group_id: str) -> str:
     """
-    REMEDIATION: Revokes a specific ingress rule. Requires exact match.
+    REMEDIATION: Revokes ALL inbound rules open to 0.0.0.0/0 on the given
+    security group. One call fixes every exposed port at once.
     """
     ec2 = get_boto_client("ec2")
     try:
-        ec2.revoke_security_group_ingress(
-            GroupId=group_id,
-            CidrIp="0.0.0.0/0",
-            FromPort=from_port,
-            ToPort=to_port,
-            IpProtocol=protocol,
-        )
-        update_status("check_ssh","SAFE")
-        return f"SUCCESS: Revoked 0.0.0.0/0 on port {from_port} for SG {group_id}."
-    except ClientError as e:
-        # If the rule is already gone, we consider it a success and mark as SAFE
-        if e.response['Error']['Code'] == 'InvalidPermission.NotFound':
+        sg = ec2.describe_security_groups(GroupIds=[group_id])["SecurityGroups"][0]
+        public_rules = [
+            perm for perm in sg["IpPermissions"]
+            if any(r.get("CidrIp") == "0.0.0.0/0" for r in perm.get("IpRanges", []))
+        ]
+
+        if not public_rules:
             update_status("check_ssh", "SAFE")
-            return f"SUCCESS: Rule was already revoked (Idempotent fix)."
+            return f"SUCCESS: No public ingress rules found on {group_id} (already clean)."
+
+        # Strip to only the 0.0.0.0/0 CidrIp ranges so we don't accidentally
+        # revoke private rules on the same permission
+        rules_to_revoke = []
+        for perm in public_rules:
+            rules_to_revoke.append({
+                **{k: v for k, v in perm.items() if k != "IpRanges"},
+                "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+            })
+
+        ec2.revoke_security_group_ingress(GroupId=group_id, IpPermissions=rules_to_revoke)
+        ports = [str(p.get("FromPort", "all")) for p in public_rules]
+        update_status("check_ssh", "SAFE")
+        return f"SUCCESS: Revoked all 0.0.0.0/0 ingress rules on {group_id} (ports: {', '.join(ports)})."
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "InvalidPermission.NotFound":
+            update_status("check_ssh", "SAFE")
+            return f"SUCCESS: Rules already revoked on {group_id} (idempotent)."
         return f"ERROR: Failed to revoke ingress on {group_id}: {str(e)}"
     except Exception as e:
         return f"ERROR: Failed to revoke ingress on {group_id}: {str(e)}"
@@ -651,17 +663,85 @@ def audit_cloudtrail_logging() -> list:
 
 
 @mcp.tool()
-def remediate_cloudtrail(trail_name: str) -> str:
+def remediate_cloudtrail(trail_name: str = "remedi-audit-trail") -> str:
     """
-    REMEDIATION: Starts logging on a CloudTrail trail that has logging disabled.
+    REMEDIATION: Ensures CloudTrail is active.
+    - If no trails exist: creates an S3 bucket, creates a multi-region trail, starts logging.
+    - If a trail exists but logging is off: starts logging on it.
     """
     ct = get_boto_client("cloudtrail")
+    s3 = get_boto_client("s3")
+    sts = get_boto_client("sts")
+
     try:
-        ct.start_logging(Name=trail_name)
-        update_status("check_cloudtrail", "SAFE")
-        return f"SUCCESS: CloudTrail logging started for trail '{trail_name}'."
+        trails = ct.describe_trails(includeShadowTrails=False).get("trailList", [])
+
+        if not trails:
+            # No trails — create one from scratch
+            account_id = sts.get_caller_identity()["Account"]
+            region = boto3.session.Session().region_name or "us-east-1"
+            bucket_name = f"remedi-cloudtrail-{account_id}-{region}"
+
+            # Create the S3 bucket
+            try:
+                if region == "us-east-1":
+                    s3.create_bucket(Bucket=bucket_name)
+                else:
+                    s3.create_bucket(
+                        Bucket=bucket_name,
+                        CreateBucketConfiguration={"LocationConstraint": region},
+                    )
+            except s3.exceptions.BucketAlreadyOwnedByYou:
+                pass
+
+            # Attach the required CloudTrail bucket policy
+            policy = json.dumps({
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "AWSCloudTrailAclCheck",
+                        "Effect": "Allow",
+                        "Principal": {"Service": "cloudtrail.amazonaws.com"},
+                        "Action": "s3:GetBucketAcl",
+                        "Resource": f"arn:aws:s3:::{bucket_name}",
+                    },
+                    {
+                        "Sid": "AWSCloudTrailWrite",
+                        "Effect": "Allow",
+                        "Principal": {"Service": "cloudtrail.amazonaws.com"},
+                        "Action": "s3:PutObject",
+                        "Resource": f"arn:aws:s3:::{bucket_name}/AWSLogs/{account_id}/*",
+                        "Condition": {
+                            "StringEquals": {"s3:x-amz-acl": "bucket-owner-full-control"}
+                        },
+                    },
+                ],
+            })
+            s3.put_bucket_policy(Bucket=bucket_name, Policy=policy)
+
+            # Create the trail and start logging
+            ct.create_trail(
+                Name=trail_name,
+                S3BucketName=bucket_name,
+                IsMultiRegionTrail=True,
+                EnableLogFileValidation=True,
+            )
+            ct.start_logging(Name=trail_name)
+            update_status("check_cloudtrail", "SAFE")
+            return (
+                f"SUCCESS: Created CloudTrail trail '{trail_name}' "
+                f"logging to s3://{bucket_name} (multi-region, log validation enabled)."
+            )
+
+        else:
+            # Trail(s) exist — find the right one and start logging
+            target = trail_name if any(t["Name"] == trail_name for t in trails) else trails[0]["Name"]
+            ct.start_logging(Name=target)
+            update_status("check_cloudtrail", "SAFE")
+            return f"SUCCESS: CloudTrail logging started for trail '{target}'."
+
     except Exception as e:
-        return f"ERROR: Failed to enable CloudTrail logging for '{trail_name}': {str(e)}"
+        return f"ERROR: Failed to remediate CloudTrail: {str(e)}"
 
 
 # =============================================================================

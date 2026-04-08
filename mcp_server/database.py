@@ -75,12 +75,36 @@ def init_db():
     # Create tables
     c.execute('''
         CREATE TABLE IF NOT EXISTS aws_accounts (
-            user_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            account_name TEXT NOT NULL DEFAULT 'Default',
             access_key_enc TEXT NOT NULL,
             secret_key_enc TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, account_name)
         )
     ''')
+    # Migration: add columns for existing DBs
+    c.execute("ALTER TABLE aws_accounts ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    c.execute("ALTER TABLE aws_accounts ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT 'Default'")
+    # Migration: promote PK from user_id-only to (user_id, account_name) if needed
+    c.execute("""
+        SELECT COUNT(kcu.column_name)
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+        WHERE tc.table_name = 'aws_accounts' AND tc.constraint_type = 'PRIMARY KEY'
+          AND tc.table_schema = 'public'
+    """)
+    row = c.fetchone()
+    if row and row[0] == 1:
+        c.execute("""
+            SELECT constraint_name FROM information_schema.table_constraints
+            WHERE table_name = 'aws_accounts' AND constraint_type = 'PRIMARY KEY' AND table_schema = 'public'
+        """)
+        pk_name = c.fetchone()[0]
+        c.execute(f"ALTER TABLE aws_accounts DROP CONSTRAINT {pk_name}")
+        c.execute("ALTER TABLE aws_accounts ADD PRIMARY KEY (user_id, account_name)")
 
     c.execute('''
         CREATE TABLE IF NOT EXISTS compliance_checks (
@@ -135,10 +159,24 @@ def init_db():
     ]
     
     for row in initial_data:
-        c.execute("INSERT INTO compliance_checks VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING", row)
+        c.execute("INSERT INTO compliance_checks (id, name, description, status) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING", row)
     
     conn.commit()
     conn.close()
+
+def purge_expired_credentials():
+    """Delete AWS credentials not used in the last 30 minutes."""
+    conn = get_connection()
+    try:
+        c = conn.cursor()
+        c.execute("DELETE FROM aws_accounts WHERE last_used_at < NOW() - INTERVAL '30 minutes'")
+        deleted = c.rowcount
+        conn.commit()
+        if deleted:
+            print(f"[DB] Purged credentials for {deleted} inactive user(s).", file=sys.stderr)
+    finally:
+        conn.close()
+
 
 def start_scan(scan_id: str):
     conn = get_connection()

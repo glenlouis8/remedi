@@ -23,6 +23,7 @@ export default function OnboardingPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [accountName, setAccountName] = useState('');
   const [accessKey, setAccessKey] = useState('');
   const [secretKey, setSecretKey] = useState('');
   const [showSecret, setShowSecret] = useState(false);
@@ -69,7 +70,7 @@ export default function OnboardingPage() {
       const res = await fetch(`${API}/api/accounts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ access_key: accessKey, secret_key: secretKey }),
+        body: JSON.stringify({ account_name: accountName.trim() || 'Default', access_key: accessKey, secret_key: secretKey }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -115,6 +116,21 @@ export default function OnboardingPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4" autoComplete="off">
+
+          {/* Account name */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">Account nickname</label>
+            <input
+              type="text"
+              value={accountName}
+              onChange={e => setAccountName(e.target.value)}
+              placeholder="e.g. Production, Dev, Personal"
+              maxLength={40}
+              autoComplete="off"
+              className="w-full bg-white border border-slate-200 rounded-lg px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
+            />
+            <p className="text-xs text-slate-400 mt-1">Optional — defaults to &quot;Default&quot; if left blank. Max 3 accounts.</p>
+          </div>
 
           {/* CSV upload */}
           <div>
