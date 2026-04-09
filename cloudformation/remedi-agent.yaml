@@ -53,7 +53,11 @@ Resources:
             Effect: Allow
             Resource: '*'
             Action:
+              - iam:AttachUserPolicy
               - iam:DetachUserPolicy
+              - iam:DeleteUserPolicy
+              - iam:ListGroupsForUser
+              - iam:RemoveUserFromGroup
               - iam:DetachRolePolicy
               - iam:AttachRolePolicy
               - iam:DeleteRolePolicy
@@ -68,6 +72,8 @@ Resources:
               - ec2:ModifyInstanceMetadataOptions
               - ec2:StopInstances
               - rds:ModifyDBInstance
+              - lambda:GetFunctionConfiguration
+              - lambda:RemoveLayerVersionPermission
               - cloudtrail:CreateTrail
               - cloudtrail:StartLogging
               - logs:CreateLogGroup
