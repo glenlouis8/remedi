@@ -1109,7 +1109,10 @@ export default function Dashboard() {
                               )}
 
                               {detail.remediations.length === 0 && findingLines.length === 0 && (
-                                <p className="text-xs text-slate-600 text-center py-2">No detailed data stored for this scan.</p>
+                                <div className="flex items-center gap-2 text-xs text-emerald-400 py-2">
+                                  <CheckCircle size={13} className="shrink-0" />
+                                  No vulnerabilities found — account was clean at time of scan.
+                                </div>
                               )}
                             </>
                           ) : null}
