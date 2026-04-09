@@ -102,9 +102,16 @@ def run_interactive_session():
         .lower()
     )
 
+    # Parse optional resource list: "approve:resource1,resource2"
+    approved_resources = None
+    if user_decision.startswith("approve:"):
+        parts = user_decision[len("approve:"):].split(",")
+        approved_resources = [r.strip() for r in parts if r.strip()]
+        user_decision = "approve"
+
     if user_decision != "approve":
         print("\n❌ Permission Denied. Aborting execution.")
-        
+
         # TELEMETRY: Mark as Aborted so it counts as a finished session
         end_time = datetime.datetime.now().isoformat()
         update_scan(scan_id, status="ABORTED", end_time=end_time)
@@ -112,7 +119,7 @@ def run_interactive_session():
 
     # 7. RESUME: Phase 2 (Remediation & Verification)
     print("\n✅ Permission Granted. Resuming Workflow...")
-    app.update_state(config, {"safety_decision": "approve"})
+    app.update_state(config, {"safety_decision": "approve", "approved_resources": approved_resources})
 
     for event in app.stream(None, config, stream_mode="values"):
         message = event["messages"][-1]

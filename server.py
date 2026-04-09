@@ -101,10 +101,14 @@ class ProcessManager:
             self.process.stdout.close()
             self.is_running = False
 
-    def send_approval(self):
+    def send_approval(self, approved_resources: list[str] | None = None):
         if self.process and self.waiting_for_approval:
             try:
-                self.process.stdin.write("approve\n")
+                if approved_resources:
+                    payload = "approve:" + ",".join(approved_resources) + "\n"
+                else:
+                    payload = "approve\n"
+                self.process.stdin.write(payload)
                 self.process.stdin.flush()
                 self.waiting_for_approval = False
                 return True
@@ -292,7 +296,7 @@ def get_metrics(user: dict = Depends(get_current_user)):
 
 @app.get("/api/metrics/history")
 def get_history(user: dict = Depends(get_current_user)):
-    return get_scan_history()
+    return get_scan_history(user_id=user["sub"])
 
 
 @app.get("/api/metrics/breakdown")
@@ -327,16 +331,21 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     if protected:
         env["PROTECTED_IAM_USERS"] = ",".join(u.strip() for u in protected if u.strip())
 
+    env["REMEDI_USER_ID"] = user_id
+
     manager = _get_manager(user_id)
     manager.start_agent(env)
     from fastapi.responses import StreamingResponse
     return StreamingResponse(manager.stream_output(), media_type="text/plain")
 
 
+class ApproveRequest(BaseModel):
+    approved_resources: list[str] | None = None
+
 @app.post("/api/approve")
-def approve_remediation(user: dict = Depends(get_current_user)):
+def approve_remediation(body: ApproveRequest = ApproveRequest(), user: dict = Depends(get_current_user)):
     manager = _get_manager(user["sub"])
-    if manager.send_approval():
+    if manager.send_approval(body.approved_resources):
         return {"status": "approved"}
     raise HTTPException(status_code=400, detail="No agent waiting for approval")
 

@@ -178,12 +178,15 @@ def purge_expired_credentials():
         conn.close()
 
 
-def start_scan(scan_id: str):
+def start_scan(scan_id: str, user_id: str | None = None):
     conn = get_connection()
     try:
         c = conn.cursor()
         now = datetime.datetime.now().isoformat()
-        c.execute("INSERT INTO scans (id, start_time, status) VALUES (%s, %s, %s) ON CONFLICT (id) DO NOTHING", (scan_id, now, "RUNNING"))
+        c.execute(
+            "INSERT INTO scans (id, user_id, start_time, status) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+            (scan_id, user_id, now, "RUNNING")
+        )
         conn.commit()
     finally:
         conn.close()
@@ -247,18 +250,27 @@ def reset_to_vulnerable():
     finally:
         conn.close()
 
-def get_scan_history():
+def get_scan_history(user_id: str | None = None):
     """Returns last 10 completed scans for the history timeline."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("""
-            SELECT id, start_time, end_time, findings_count, remediations_count, status, verified
-            FROM scans
-            WHERE status IN ('COMPLETED', 'ABORTED')
-            ORDER BY start_time DESC
-            LIMIT 10
-        """)
+        if user_id:
+            cur.execute("""
+                SELECT id, start_time, end_time, findings_count, remediations_count, status, verified
+                FROM scans
+                WHERE status IN ('COMPLETED', 'ABORTED') AND user_id = %s
+                ORDER BY start_time DESC
+                LIMIT 10
+            """, (user_id,))
+        else:
+            cur.execute("""
+                SELECT id, start_time, end_time, findings_count, remediations_count, status, verified
+                FROM scans
+                WHERE status IN ('COMPLETED', 'ABORTED')
+                ORDER BY start_time DESC
+                LIMIT 10
+            """)
         rows = [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()

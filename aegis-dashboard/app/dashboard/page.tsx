@@ -6,9 +6,9 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   ShieldCheck, ShieldAlert, Play, Square, CheckCircle, XCircle,
-  AlertTriangle, ChevronRight, Users, HardDrive, Globe, Shield,
+  AlertTriangle, Users, HardDrive, Globe, Shield,
   Server, Database, Zap, FileText, Lock, ChevronDown,
-  LayoutDashboard, History, LogOut, Clock, AlertOctagon,
+  LayoutDashboard, History, LogOut, Clock,
   Activity, TrendingUp,
 } from 'lucide-react';
 
@@ -78,23 +78,40 @@ const parseRemediationItem = (line: string) => {
 
 // ─── CIS Score Gauge ──────────────────────────────────────────────────────────
 
-function ScoreGauge({ score, total, percentage }: { score: number; total: number; percentage: number }) {
-  const r = 36;
-  const circ = 2 * Math.PI * r;
-  const arcLen = circ * 0.75;
-  const filled = (percentage / 100) * arcLen;
-  const color = percentage >= 80 ? '#10b981' : percentage >= 50 ? '#f59e0b' : '#ef4444';
+function ScoreGauge({ score, total, percentage, large = false }: {
+  score: number; total: number; percentage: number; large?: boolean
+}) {
+  const color = percentage >= 80 ? '#8b5cf6' : percentage >= 50 ? '#f59e0b' : '#ef4444';
   const label = percentage >= 80 ? 'Compliant' : percentage >= 50 ? 'Needs attention' : 'At risk';
 
+  if (large) {
+    const r = 60; const circ = 2 * Math.PI * r; const arcLen = circ * 0.75;
+    const filled = (percentage / 100) * arcLen;
+    return (
+      <div className="flex flex-col items-center">
+        <svg viewBox="0 0 160 160" className="w-52 h-52">
+          <circle cx="80" cy="80" r={r} fill="none" stroke="#222228" strokeWidth="10"
+            strokeDasharray={`${arcLen} ${circ}`} strokeLinecap="round" transform="rotate(135 80 80)" />
+          <circle cx="80" cy="80" r={r} fill="none" stroke={color} strokeWidth="10"
+            strokeDasharray={`${filled} ${circ}`} strokeLinecap="round" transform="rotate(135 80 80)"
+            style={{ transition: 'stroke-dasharray 1s ease' }} />
+          <text x="80" y="74" textAnchor="middle" fontSize="36" fontWeight="700" fill="#e2e8f0" fontFamily="JetBrains Mono, monospace">{percentage}%</text>
+          <text x="80" y="95" textAnchor="middle" fontSize="12" fill="#475569">{score} / {total} controls</text>
+        </svg>
+        <span className="text-sm font-semibold -mt-5" style={{ color }}>{label}</span>
+      </div>
+    );
+  }
+
+  const r = 36; const circ = 2 * Math.PI * r; const arcLen = circ * 0.75;
+  const filled = (percentage / 100) * arcLen;
   return (
     <div className="flex flex-col items-center justify-center">
       <svg viewBox="0 0 100 100" className="w-32 h-32">
-        <circle cx="50" cy="50" r={r} fill="none" stroke="#1a2540" strokeWidth="10"
-          strokeDasharray={`${arcLen} ${circ}`} strokeLinecap="round"
-          transform="rotate(135 50 50)" />
+        <circle cx="50" cy="50" r={r} fill="none" stroke="#222228" strokeWidth="10"
+          strokeDasharray={`${arcLen} ${circ}`} strokeLinecap="round" transform="rotate(135 50 50)" />
         <circle cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth="10"
-          strokeDasharray={`${filled} ${circ}`} strokeLinecap="round"
-          transform="rotate(135 50 50)"
+          strokeDasharray={`${filled} ${circ}`} strokeLinecap="round" transform="rotate(135 50 50)"
           style={{ transition: 'stroke-dasharray 0.8s ease' }} />
         <text x="50" y="47" textAnchor="middle" fontSize="22" fontWeight="700" fill="#e2e8f0">{score}</text>
         <text x="50" y="61" textAnchor="middle" fontSize="11" fill="#475569">/ {total}</text>
@@ -115,30 +132,30 @@ function ServiceCard({ svc, items, isActive, scanState }: {
   const vulnCount = items.filter(i => i.status === 'vulnerable').length;
   const isPending = !hasData && !isActive && scanState === 'scanning';
 
-  let cardClass = 'bg-[#0f1621] border-[#1a2540]';
-  if (isActive)                  cardClass = 'bg-emerald-950/30 border-emerald-700/50 shadow-sm shadow-emerald-900/20';
+  let cardClass = 'bg-[#111116] border-white/8';
+  if (isActive)                  cardClass = 'bg-violet-950/30 border-violet-700/50 shadow-sm shadow-violet-900/20';
   else if (hasData && vulnCount) cardClass = 'bg-red-950/30 border-red-700/40';
-  else if (hasData)              cardClass = 'bg-emerald-950/20 border-emerald-800/40';
-  else if (isPending)            cardClass = 'bg-[#0f1621]/60 border-[#1a2540]/50 opacity-40';
+  else if (hasData)              cardClass = 'bg-violet-950/20 border-violet-800/40';
+  else if (isPending)            cardClass = 'bg-[#111116]/60 border-white/8/50 opacity-40';
 
   return (
     <div className={`rounded-xl border p-4 transition-all duration-500 ${cardClass}`}>
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2">
           <Icon size={14} className={
-            isActive ? 'text-emerald-400' : hasData && vulnCount ? 'text-red-400' : hasData ? 'text-emerald-400' : 'text-slate-700'
+            isActive ? 'text-violet-400' : hasData && vulnCount ? 'text-red-400' : hasData ? 'text-violet-400' : 'text-slate-700'
           } />
           <span className={`text-sm font-medium ${isActive || hasData ? 'text-slate-200' : 'text-slate-700'}`}>{label}</span>
         </div>
-        {isActive && <span className="flex items-center gap-1 text-xs text-emerald-400"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />scanning</span>}
+        {isActive && <span className="flex items-center gap-1 text-xs text-violet-400"><span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />scanning</span>}
         {!isActive && hasData && vulnCount > 0 && <span className="text-xs text-red-400 font-medium">{vulnCount} issue{vulnCount !== 1 ? 's' : ''}</span>}
-        {!isActive && hasData && vulnCount === 0 && <CheckCircle size={13} className="text-emerald-400" />}
+        {!isActive && hasData && vulnCount === 0 && <CheckCircle size={13} className="text-violet-400" />}
       </div>
       {hasData ? (
         <div className="space-y-1.5 mt-2">
           {items.map((item, i) => (
             <div key={i} className="flex items-center gap-2">
-              <span className={`shrink-0 text-xs ${item.status === 'vulnerable' ? 'text-red-400' : 'text-emerald-400'}`}>
+              <span className={`shrink-0 text-xs ${item.status === 'vulnerable' ? 'text-red-400' : 'text-violet-400'}`}>
                 {item.status === 'vulnerable' ? '⚠' : '✓'}
               </span>
               <span className="text-xs text-slate-500 font-mono truncate">{item.resource}</span>
@@ -147,7 +164,7 @@ function ServiceCard({ svc, items, isActive, scanState }: {
         </div>
       ) : isActive ? (
         <div className="space-y-1.5 mt-2">
-          {[1, 2].map(i => <div key={i} className="h-3 bg-emerald-900/40 rounded animate-pulse" style={{ width: `${50 + i * 20}%` }} />)}
+          {[1, 2].map(i => <div key={i} className="h-3 bg-violet-900/40 rounded animate-pulse" style={{ width: `${50 + i * 20}%` }} />)}
         </div>
       ) : (
         <p className="text-xs text-slate-700 mt-1">—</p>
@@ -271,6 +288,11 @@ export default function Dashboard() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    let wasAborted = false;
+    let hadVulns   = false;
+    // Local mirror of remediation steps — updated synchronously so finally can read it
+    // without depending on React's async state batching.
+    const tracker: { resource: string; status: 'running' | 'success' | 'error' }[] = [];
 
     try {
       const token = await getToken();
@@ -312,48 +334,77 @@ export default function Dashboard() {
             setScanState('awaiting_approval');
           }
 
-          if (raw.includes('[CRITICAL]') || raw.includes('[POLICY VIOLATION]')) {
+          if (raw.includes('[CRITICAL]') || raw.includes('[POLICY VIOLATION]') || raw.includes('[HIGH]')) {
             const item = parseRemediationItem(raw);
-            if (item) setRemediationPlan(prev => {
-              const exists = prev.some(p => p.resource === item.resource && p.toolName === item.toolName);
-              return exists ? prev : [...prev, item];
-            });
+            if (item) {
+              hadVulns = true;
+              setRemediationPlan(prev => {
+                const exists = prev.some(p => p.resource === item.resource && p.toolName === item.toolName);
+                return exists ? prev : [...prev, item];
+              });
+            }
           }
 
           const execMatch = raw.match(/\[EXEC\] Calling (\w+) with \{(.+)\}/);
           if (execMatch) {
             const funcName      = execMatch[1];
             const resourceMatch = execMatch[2].match(/['"]([\w\-\.]+)['"]/);
+            const resource      = resourceMatch?.[1] || funcName;
+            tracker.push({ resource, status: 'running' });
             setScanState('remediating');
-            setRemediationSteps(prev => [...prev, { funcName, resource: resourceMatch?.[1] || funcName, status: 'running' }]);
+            setRemediationSteps(prev => [...prev, { funcName, resource, status: 'running' }]);
           }
 
           if (raw.includes('✅') && raw.includes('SUCCESS') && !raw.includes('[EXEC]')) {
+            const idx = tracker.findLastIndex(s => s.status === 'running');
+            if (idx >= 0) tracker[idx].status = 'success';
             setRemediationSteps(prev => {
               const updated = [...prev];
-              const idx = updated.findLastIndex(s => s.status === 'running');
-              if (idx >= 0) updated[idx] = { ...updated[idx], status: 'success' };
+              const i = updated.findLastIndex(s => s.status === 'running');
+              if (i >= 0) updated[i] = { ...updated[i], status: 'success' };
               return updated;
             });
           }
 
           if (raw.includes('❌')) {
+            const idx = tracker.findLastIndex(s => s.status === 'running');
+            if (idx >= 0) tracker[idx].status = 'error';
             setRemediationSteps(prev => {
               const updated = [...prev];
-              const idx = updated.findLastIndex(s => s.status === 'running');
-              if (idx >= 0) updated[idx] = { ...updated[idx], status: 'error' };
+              const i = updated.findLastIndex(s => s.status === 'running');
+              if (i >= 0) updated[i] = { ...updated[i], status: 'error' };
               return updated;
             });
           }
         }
       }
     } catch (err: unknown) {
-      if ((err as Error).name === 'AbortError') return;
+      if ((err as Error).name === 'AbortError') wasAborted = true;
     } finally {
       setActiveService(null);
-      setScanState('complete');
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 4500);
+      if (wasAborted) {
+        setScanState('idle');
+      } else {
+        setScanState('complete');
+        if (!hadVulns) {
+          setShowSuccess(true);
+          setTimeout(() => setShowSuccess(false), 4500);
+        }
+        // Flip fixed resources from vulnerable → ok in the service cards.
+        // Uses the local tracker (not React state) to avoid async batching issues.
+        const fixed = new Set(tracker.filter(s => s.status === 'success').map(s => s.resource));
+        if (fixed.size > 0) {
+          setScanItems(prev => {
+            const updated: Partial<Record<ServiceKey, ScanItem[]>> = {};
+            for (const [svc, items] of Object.entries(prev)) {
+              updated[svc as ServiceKey] = items.map(item =>
+                fixed.has(item.resource) ? { ...item, status: 'ok' } : item
+              );
+            }
+            return updated;
+          });
+        }
+      }
     }
   };
 
@@ -397,32 +448,33 @@ export default function Dashboard() {
   const successLabel = fixedCount === 0 ? 'No vulnerabilities found' : 'All threats neutralized';
 
   return (
-    <div className="flex h-screen bg-[#080d18] overflow-hidden">
+    <div className="flex flex-col h-screen bg-[#09090b] overflow-hidden" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');`}</style>
 
       {/* ── Success overlay ──────────────────────────────────────────────────── */}
       {showSuccess && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#080d18]/75 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#09090b]/75 backdrop-blur-sm"
           onClick={() => setShowSuccess(false)}
         >
           <div
-            className="success-card relative bg-[#0f1621] border border-emerald-500/25 rounded-2xl p-10 shadow-2xl shadow-emerald-900/30 text-center w-80"
+            className="success-card relative bg-[#111116] border border-violet-500/25 rounded-2xl p-10 shadow-2xl shadow-violet-900/30 text-center w-80"
             onClick={e => e.stopPropagation()}
           >
             {/* Pulsing rings */}
             <div className="relative flex items-center justify-center mb-7">
-              <div className="ring-out absolute w-20 h-20 rounded-full border border-emerald-400/30" />
-              <div className="ring-out absolute w-20 h-20 rounded-full border border-emerald-400/20" style={{ animationDelay: '0.7s' }} />
+              <div className="ring-out absolute w-20 h-20 rounded-full border border-violet-400/30" />
+              <div className="ring-out absolute w-20 h-20 rounded-full border border-violet-400/20" style={{ animationDelay: '0.7s' }} />
 
               {/* Shield + checkmark */}
               <svg viewBox="0 0 80 80" className="w-20 h-20 relative z-10">
                 <path
                   d="M40 8 L66 19 L66 43 C66 57 54 67 40 72 C26 67 14 57 14 43 L14 19 Z"
-                  fill="rgba(16,185,129,0.07)" stroke="#10b981" strokeWidth="2" strokeLinejoin="round"
+                  fill="rgba(139,92,246,0.07)" stroke="#8b5cf6" strokeWidth="2" strokeLinejoin="round"
                 />
                 <polyline
                   points="27,40 36,50 53,30"
-                  fill="none" stroke="#10b981" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"
+                  fill="none" stroke="#8b5cf6" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"
                   style={{ strokeDasharray: 60, strokeDashoffset: 60, animation: 'draw-check 0.55s ease-out 0.25s forwards' }}
                 />
               </svg>
@@ -438,12 +490,12 @@ export default function Dashboard() {
 
             {/* Stats */}
             <div className="fade-slide-up flex gap-3 justify-center mb-7" style={{ animationDelay: '0.65s' }}>
-              <div className="flex-1 bg-[#080d18] rounded-xl px-4 py-3 border border-[#1a2540]">
-                <div className="text-xl font-bold text-emerald-400">{fixedCount}</div>
+              <div className="flex-1 bg-[#09090b] rounded-xl px-4 py-3 border border-white/8">
+                <div className="text-xl font-bold text-violet-400">{fixedCount}</div>
                 <div className="text-xs text-slate-500 mt-0.5">Fixed</div>
               </div>
-              <div className="flex-1 bg-[#080d18] rounded-xl px-4 py-3 border border-[#1a2540]">
-                <div className="text-xl font-bold text-emerald-400">✓</div>
+              <div className="flex-1 bg-[#09090b] rounded-xl px-4 py-3 border border-white/8">
+                <div className="text-xl font-bold text-violet-400">✓</div>
                 <div className="text-xs text-slate-500 mt-0.5">Verified</div>
               </div>
             </div>
@@ -459,302 +511,178 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ── Sidebar ─────────────────────────────────────────────────────────── */}
-      <aside className="w-56 bg-[#0b1120] border-r border-[#1a2540] flex flex-col shrink-0">
-        <div className="px-5 py-5 border-b border-[#1a2540]">
-          <Link href="/" className="flex items-center gap-2">
-            <ShieldCheck className="text-emerald-400" size={18} />
-            <span className="font-semibold tracking-tight text-slate-100">Remedi</span>
-          </Link>
-        </div>
+      {/* ── Top nav ─────────────────────────────────────────────────────────── */}
+      <header className="shrink-0 border-b border-white/6" style={{ background: '#09090b' }}>
+        <div className="flex items-center justify-between px-6 h-14 gap-4">
 
-        <nav className="flex-1 px-3 py-4 space-y-0.5">
-          {([
-            { key: 'overview',    label: 'Overview',    Icon: LayoutDashboard },
-            { key: 'compliance',  label: 'Compliance',  Icon: Shield          },
-            { key: 'history',     label: 'History',     Icon: History         },
-          ] as const).map(({ key, label, Icon }) => (
-            <button key={key} onClick={() => setView(key)}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors text-left ${
-                view === key
-                  ? 'bg-emerald-500/10 text-emerald-400 font-medium'
-                  : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
-              }`}>
-              <Icon size={15} />
-              {label}
-            </button>
-          ))}
-        </nav>
-
-        <div className="px-4 py-4 border-t border-[#1a2540]">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-7 h-7 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center shrink-0">
-              <span className="text-xs font-semibold text-emerald-400">{userInitial}</span>
+          {/* Logo */}
+          <Link href="/" className="flex items-center gap-2 shrink-0">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.25)' }}>
+              <ShieldCheck size={15} className="text-violet-400" />
             </div>
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-slate-200 truncate">{user?.firstName ?? 'User'}</p>
-              <p className="text-xs text-slate-600 truncate">{user?.emailAddresses?.[0]?.emailAddress ?? ''}</p>
+            <span className="font-semibold tracking-tight text-white">Remedi</span>
+          </Link>
+
+          {/* Tab nav */}
+          <nav className="flex items-center gap-1">
+            {([
+              { key: 'overview',   label: 'Overview',   Icon: LayoutDashboard },
+              { key: 'compliance', label: 'Compliance', Icon: Shield          },
+              { key: 'history',    label: 'History',    Icon: History         },
+            ] as const).map(({ key, label, Icon }) => (
+              <button key={key} onClick={() => setView(key)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                  view === key
+                    ? 'bg-violet-500/10 text-violet-400 font-medium'
+                    : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
+                }`}>
+                <Icon size={14} />
+                {label}
+              </button>
+            ))}
+          </nav>
+
+          {/* Right: account pills + user */}
+          <div className="flex items-center gap-2 shrink-0">
+
+            {/* Account pills */}
+            {accounts.map(a => (
+              <button
+                key={a.account_name}
+                onClick={() => {
+                  setSelectedAccount(a.account_name);
+                  getToken().then(token => {
+                    fetch(`${API}/api/iam/users?account_name=${encodeURIComponent(a.account_name)}`, {
+                      headers: { Authorization: `Bearer ${token}` },
+                    }).then(r => r.ok ? r.json() : null).then(data => {
+                      if (data) { setIamUsers(data.users ?? []); setCredentialUser(data.credential_user ?? null); }
+                    }).catch(() => {});
+                  });
+                }}
+                disabled={scanState === 'scanning' || scanState === 'remediating'}
+                className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 ${
+                  selectedAccount === a.account_name
+                    ? 'bg-violet-500/10 border-violet-500/30 text-violet-400'
+                    : 'border-white/8 text-slate-500 hover:text-slate-300 hover:border-white/15'
+                }`}
+              >
+                {a.account_name}
+              </button>
+            ))}
+            {accounts.length < 3 && (
+              <Link href="/onboarding" className="text-xs text-slate-600 hover:text-slate-400 px-2 py-1.5 transition-colors">
+                + Add
+              </Link>
+            )}
+
+            {/* User avatar */}
+            <div className="relative ml-1" ref={dropdownRef}>
+              <button
+                onClick={() => setDropdownOpen(v => !v)}
+                className="w-8 h-8 rounded-full bg-violet-500/15 border border-violet-500/25 flex items-center justify-center hover:bg-violet-500/25 transition-colors"
+              >
+                <span className="text-xs font-semibold text-violet-400">{userInitial}</span>
+              </button>
+              {dropdownOpen && (
+                <div className="absolute right-0 top-full mt-2 w-52 bg-[#111116] border border-white/8 rounded-xl shadow-2xl shadow-black/50 z-20 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-white/6">
+                    <p className="text-xs font-medium text-slate-200 truncate">{user?.firstName ?? 'User'}</p>
+                    <p className="text-xs text-slate-600 truncate">{user?.emailAddresses?.[0]?.emailAddress ?? ''}</p>
+                  </div>
+                  {credentialUser && (
+                    <div className="px-4 py-2.5 border-b border-white/6">
+                      <p className="text-xs text-slate-600 mb-0.5">Connected as</p>
+                      <p className="text-xs font-mono text-slate-400 truncate">{credentialUser}</p>
+                    </div>
+                  )}
+                  <button
+                    onClick={async () => {
+                      const token = await getToken();
+                      await fetch(`${API}/api/accounts`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }).catch(console.error);
+                      signOut({ redirectUrl: '/' });
+                    }}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-slate-500 hover:text-slate-200 hover:bg-white/5 transition-colors text-left"
+                  >
+                    <LogOut size={12} /> Sign out
+                  </button>
+                </div>
+              )}
             </div>
           </div>
-          <button
-            onClick={async () => {
-              const token = await getToken();
-              await fetch(`${API}/api/accounts`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }).catch(console.error);
-              signOut({ redirectUrl: '/' });
-            }}
-            className="flex items-center gap-2 text-xs text-slate-600 hover:text-slate-300 transition-colors"
-          >
-            <LogOut size={13} /> Sign out
-          </button>
         </div>
-      </aside>
+      </header>
 
       {/* ── Main ────────────────────────────────────────────────────────────── */}
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto px-6 py-7 space-y-6">
 
-          {/* Page header */}
-          <div className="flex items-start justify-between">
-            <div>
-              <h1 className="text-xl font-bold text-slate-100">
-                {view === 'overview' ? 'Security Dashboard' : view === 'compliance' ? 'Compliance' : 'Scan History'}
-              </h1>
-              <p className="text-sm text-slate-500 mt-0.5">
-                {credentialUser
-                  ? <>Connected as <span className="font-mono text-slate-400">{credentialUser}</span></>
-                  : 'No AWS account connected'}
-              </p>
-            </div>
-            {view === 'overview' && (
-              <div className="flex items-center gap-3">
-                {(scanState === 'scanning' || scanState === 'remediating') ? (
-                  <button onClick={handleStop}
-                    className="flex items-center gap-2 text-sm text-red-400 border border-red-800/60 bg-red-950/30 px-4 py-2 rounded-lg hover:bg-red-950/50 transition-colors">
-                    <Square size={12} className="fill-current" /> Stop
-                  </button>
-                ) : (
-                  <button onClick={startScan} disabled={scanState === 'awaiting_approval'}
-                    className="flex items-center gap-2 text-sm bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-white font-semibold px-5 py-2 rounded-lg transition-colors shadow-lg shadow-emerald-900/30">
-                    <Play size={12} className="fill-current" />
-                    {scanState === 'complete' ? 'Scan again' : 'Run scan'}
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* ── Account selector ─────────────────────────────────────────────── */}
-          {accounts.length > 0 && (
-            <div className="flex items-center gap-2 flex-wrap">
-              {accounts.map(a => (
-                <div key={a.account_name} className={`flex items-center gap-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                  selectedAccount === a.account_name
-                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                    : 'bg-[#0f1621] border-[#1a2540] text-slate-400 hover:text-slate-200'
-                }`}>
-                  <button
-                    onClick={() => {
-                      setSelectedAccount(a.account_name);
-                      getToken().then(token => {
-                        fetch(`${API}/api/iam/users?account_name=${encodeURIComponent(a.account_name)}`, {
-                          headers: { Authorization: `Bearer ${token}` },
-                        }).then(r => r.ok ? r.json() : null).then(data => {
-                          if (data) { setIamUsers(data.users ?? []); setCredentialUser(data.credential_user ?? null); }
-                        }).catch(() => {});
-                      });
-                    }}
-                    disabled={scanState === 'scanning' || scanState === 'remediating'}
-                    className="px-3 py-1.5 disabled:opacity-40"
-                  >
-                    {a.account_name}
-                  </button>
-                  <button
-                    onClick={() => handleDeleteAccount(a.account_name)}
-                    disabled={scanState === 'scanning' || scanState === 'remediating'}
-                    className="pr-2 text-slate-600 hover:text-red-400 transition-colors disabled:opacity-40"
-                    title={`Remove ${a.account_name}`}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-              {accounts.length < 3 && (
-                <Link
-                  href="/onboarding"
-                  className="flex items-center gap-1 text-xs text-slate-600 hover:text-emerald-400 border border-dashed border-[#1a2540] hover:border-emerald-500/30 rounded-lg px-3 py-1.5 transition-colors"
-                >
-                  + Add account
-                  <span className="text-slate-700 ml-1">{accounts.length}/3</span>
-                </Link>
-              )}
-            </div>
-          )}
-
           {/* ── Overview ──────────────────────────────────────────────────────── */}
           {view === 'overview' && (<>
 
-            {/* Stats + gauge */}
-            <div className="grid grid-cols-3 gap-4">
-              <div className="bg-[#0f1621] border border-[#1a2540] rounded-xl p-5 shadow-sm flex items-center justify-center">
-                {cisScore
-                  ? <ScoreGauge score={cisScore.score} total={cisScore.total} percentage={cisScore.percentage} />
-                  : <div className="w-32 h-32 rounded-full border-8 border-[#1a2540] flex items-center justify-center">
-                      <span className="text-slate-700 text-xs">Loading…</span>
-                    </div>
-                }
-              </div>
-              <div className="col-span-2 grid grid-cols-2 gap-4">
-                {[
-                  { label: 'Total scans',  value: metrics?.total_scans  ?? '—', sub: 'all time',          Icon: Activity,     color: 'text-slate-100'   },
-                  { label: 'Success rate', value: metrics?.success_rate ?? '—', sub: 'fixes applied',     Icon: TrendingUp,   color: 'text-emerald-400' },
-                  { label: 'Avg fix time', value: metrics?.avg_mttr     ?? '—', sub: 'after approval',    Icon: Clock,        color: 'text-slate-100'   },
-                  { label: 'Open vulns',   value: openVulns,                    sub: 'unresolved issues', Icon: AlertOctagon, color: openVulns === '0' ? 'text-emerald-400' : 'text-red-400' },
-                ].map(({ label, value, sub, Icon, color }) => (
-                  <div key={label} className="bg-[#0f1621] border border-[#1a2540] rounded-xl p-5 shadow-sm">
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-xs text-slate-500 font-medium">{label}</p>
-                      <Icon size={14} className="text-slate-700" />
-                    </div>
-                    <p className={`text-2xl font-bold ${color}`}>{value}</p>
-                    <p className="text-xs text-slate-600 mt-1">{sub}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Last scan banner */}
-            {lastScan && (
-              <div className={`rounded-xl border p-4 flex items-center justify-between ${
-                lastScan.verified               ? 'bg-emerald-950/30 border-emerald-700/40' :
-                lastScan.status === 'COMPLETED' ? 'bg-blue-950/30 border-blue-700/40'       :
-                'bg-[#0f1621] border-[#1a2540]'
-              }`}>
-                <div className="flex items-center gap-3">
-                  {lastScan.verified
-                    ? <CheckCircle size={16} className="text-emerald-400" />
-                    : <Activity    size={16} className="text-blue-400" />}
-                  <div>
-                    <p className="text-sm font-medium text-slate-200">
-                      Last scan: <span className="font-mono text-slate-400">{lastScan.id}</span>
-                    </p>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      {new Date(lastScan.start_time).toLocaleString()}
-                      {' · '}{lastScan.findings_count ?? 0} findings
-                      {' · '}{lastScan.remediations_count ?? 0} fixed
-                      {lastScan.estimated_cost ? ` · $${lastScan.estimated_cost.toFixed(4)}` : ''}
-                    </p>
-                  </div>
-                </div>
-                <span className={`text-xs px-2.5 py-1 rounded-full font-medium border ${
-                  lastScan.verified               ? 'bg-emerald-500/15 text-emerald-400 border-emerald-700/40' :
-                  lastScan.status === 'COMPLETED' ? 'bg-blue-500/15 text-blue-400 border-blue-700/40'         :
-                  'bg-slate-800 text-slate-400 border-slate-700'
-                }`}>
-                  {lastScan.verified ? '✓ Verified' : lastScan.status}
-                </span>
-              </div>
-            )}
-
-            {/* Protected users */}
-            {(scanState === 'idle' || scanState === 'complete') && iamUsers.length > 0 && (
-              <div className="bg-[#0f1621] border border-[#1a2540] rounded-xl p-5 shadow-sm">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-200 mb-0.5">Protected IAM users</p>
-                    <p className="text-xs text-slate-500">
-                      These users will be audited but never modified.
-                      {credentialUser && <> <span className="font-mono text-slate-400">{credentialUser}</span> is always protected.</>}
-                    </p>
-                  </div>
-                  <div className="relative shrink-0" ref={dropdownRef}>
-                    <button onClick={() => setDropdownOpen(v => !v)}
-                      className="flex items-center gap-2 text-sm border border-[#1a2540] bg-[#080d18] hover:bg-[#0b1120] rounded-lg px-3 py-2 transition-colors min-w-[160px] justify-between">
-                      <span className="text-slate-300">
-                        {protectedUsers.length === 0 ? 'Select users…' : `${protectedUsers.length} protected`}
-                      </span>
-                      <ChevronDown size={14} className={`text-slate-500 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
-                    </button>
-                    {dropdownOpen && (
-                      <div className="absolute right-0 top-full mt-1 w-64 bg-[#0f1621] border border-[#1a2540] rounded-xl shadow-2xl shadow-black/50 z-10 overflow-hidden">
-                        {credentialUser && (
-                          <div className="flex items-center gap-3 px-4 py-2.5 bg-[#080d18] border-b border-[#1a2540]">
-                            <Lock size={12} className="text-slate-600 shrink-0" />
-                            <span className="text-sm font-mono text-slate-500 flex-1 truncate">{credentialUser}</span>
-                            <span className="text-xs text-slate-600">auto</span>
-                          </div>
-                        )}
-                        <div className="max-h-52 overflow-y-auto">
-                          {iamUsers.filter(u => u !== credentialUser).map(u => {
-                            const checked = protectedUsers.includes(u);
-                            return (
-                              <label key={u} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[#0b1120] cursor-pointer transition-colors">
-                                <input type="checkbox" checked={checked}
-                                  onChange={() => setProtectedUsers(prev => checked ? prev.filter(x => x !== u) : [...prev, u])}
-                                  className="accent-emerald-500" />
-                                <span className="text-sm font-mono text-slate-300 truncate">{u}</span>
-                              </label>
-                            );
-                          })}
-                          {iamUsers.filter(u => u !== credentialUser).length === 0 && (
-                            <p className="text-xs text-slate-600 px-4 py-3">No other IAM users found.</p>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Idle CTA */}
+            {/* ── IDLE: hero card ── */}
             {scanState === 'idle' && (
-              <div className="bg-[#0f1621] border border-[#1a2540] rounded-xl p-10 flex flex-col items-center text-center shadow-sm">
-                <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-4">
-                  <ShieldCheck className="text-emerald-400" size={28} />
+              <div className="rounded-2xl border border-white/8 bg-[#111116] overflow-hidden">
+                <div className="flex flex-col items-center text-center px-8 pt-12 pb-10">
+                  {cisScore ? (
+                    <ScoreGauge large score={cisScore.score} total={cisScore.total} percentage={cisScore.percentage} />
+                  ) : (
+                    <div className="w-52 h-52 flex items-center justify-center">
+                      <div className="w-36 h-36 rounded-full border-8 border-white/6 flex items-center justify-center animate-pulse">
+                        <span className="text-slate-700 text-xs">Loading…</span>
+                      </div>
+                    </div>
+                  )}
+                  <button onClick={startScan}
+                    className="mt-6 flex items-center gap-2.5 bg-violet-500 hover:bg-violet-400 text-white font-semibold px-8 py-3 rounded-xl transition-colors text-sm shadow-lg shadow-violet-900/20">
+                    <Play size={14} className="fill-current" /> Run security scan
+                  </button>
+                  {credentialUser && (
+                    <p className="text-xs text-slate-600 mt-3">
+                      Scanning <span className="font-mono text-slate-500">{credentialUser}</span>
+                    </p>
+                  )}
                 </div>
-                <h2 className="text-lg font-semibold text-slate-100 mb-2">Ready to scan</h2>
-                <p className="text-slate-500 text-sm mb-6 max-w-sm">
-                  Remedi audits your AWS account across 8 services in parallel — then shows you exactly what to fix.
-                </p>
-                <button onClick={startScan}
-                  className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-white font-semibold px-6 py-2.5 rounded-lg transition-colors text-sm shadow-lg shadow-emerald-900/30">
-                  <Play size={13} className="fill-current" /> Start scan
-                </button>
+                <div className="grid grid-cols-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                  {[
+                    { label: 'Total scans',  value: String(metrics?.total_scans ?? '—') },
+                    { label: 'Success rate', value: metrics?.success_rate ?? '—'         },
+                    { label: 'Avg fix time', value: metrics?.avg_mttr ?? '—'             },
+                    { label: 'Open vulns',   value: openVulns                            },
+                  ].map(({ label, value }, idx) => (
+                    <div key={label} className="px-6 py-4 text-center" style={{ borderLeft: idx > 0 ? '1px solid rgba(255,255,255,0.06)' : 'none' }}>
+                      <p className="text-xl font-bold text-slate-100" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{value}</p>
+                      <p className="text-xs text-slate-600 mt-0.5">{label}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
-            {/* Service cards */}
-            {isScanning && (
+            {/* ── SCANNING ── */}
+            {scanState === 'scanning' && (
               <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">
-                    {scanState === 'complete' ? 'Scan results' : 'Live scan'}
-                  </h2>
-                  {scanState === 'scanning' && (
-                    <span className="flex items-center gap-2 text-xs text-emerald-400 font-medium">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Scanning…
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <span className="w-2 h-2 rounded-full bg-violet-400 animate-pulse shrink-0" />
+                    <span className="text-sm font-medium text-slate-200">
+                      {activeService ? `Scanning ${SERVICE_META[activeService].label}…` : 'Initializing scan…'}
                     </span>
-                  )}
-                  {scanState === 'complete' && (
-                    <button onClick={startScan} className="text-xs text-slate-600 hover:text-slate-300 flex items-center gap-1 transition-colors">
-                      Scan again <ChevronRight size={12} />
-                    </button>
-                  )}
-                </div>
-                {scanState === 'scanning' && (
-                  <div className="w-full h-0.5 rounded-full bg-emerald-950 overflow-hidden mb-4">
-                    <div className="h-full shimmer-bar rounded-full" />
                   </div>
-                )}
+                  <button onClick={handleStop}
+                    className="flex items-center gap-1.5 text-xs text-red-400 border border-red-800/40 px-3 py-1.5 rounded-lg hover:bg-red-950/20 transition-colors">
+                    <Square size={10} className="fill-current" /> Stop
+                  </button>
+                </div>
+                <div className="w-full h-0.5 rounded-full overflow-hidden mb-4" style={{ background: 'rgba(139,92,246,0.1)' }}>
+                  <div className="h-full shimmer-bar rounded-full" />
+                </div>
                 <div className="relative rounded-2xl overflow-hidden">
-                  {scanState === 'scanning' && (
-                    <div className="scan-beam pointer-events-none absolute inset-x-0 z-10"
-                      style={{
-                        height: '2px',
-                        background: 'linear-gradient(90deg, transparent 0%, #6ee7b7 20%, #10b981 50%, #6ee7b7 80%, transparent 100%)',
-                        boxShadow: '0 0 12px 4px rgba(16, 185, 129, 0.35), 0 0 40px 8px rgba(16, 185, 129, 0.12)',
-                      }} />
-                  )}
+                  <div className="scan-beam pointer-events-none absolute inset-x-0 z-10"
+                    style={{
+                      height: '2px',
+                      background: 'linear-gradient(90deg, transparent 0%, #c4b5fd 20%, #8b5cf6 50%, #c4b5fd 80%, transparent 100%)',
+                      boxShadow: '0 0 12px 4px rgba(139,92,246,0.35), 0 0 40px 8px rgba(139,92,246,0.12)',
+                    }} />
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-0.5">
                     {SERVICE_ORDER.map(svc => (
                       <ServiceCard key={svc} svc={svc} items={scanItems[svc] ?? []} isActive={activeService === svc} scanState={scanState} />
@@ -764,33 +692,88 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Approval gate */}
+            {/* ── AWAITING APPROVAL ── */}
             {scanState === 'awaiting_approval' && (
-              <div className="bg-[#0f1621] border border-amber-700/40 rounded-xl overflow-hidden shadow-sm">
-                <div className="flex items-center justify-between px-6 py-4 border-b border-amber-800/30 bg-amber-950/20">
-                  <div className="flex items-center gap-3">
-                    <AlertTriangle className="text-amber-400" size={18} />
-                    <div>
-                      <h2 className="font-semibold text-sm text-amber-300">Approval required</h2>
-                      <p className="text-xs text-amber-500/80">{remediationPlan.length} issue{remediationPlan.length !== 1 ? 's' : ''} found — review and approve fixes</p>
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-amber-700/40 overflow-hidden">
+                  <div className="flex items-center justify-between px-6 py-5 border-b border-amber-800/20" style={{ background: 'rgba(120,53,15,0.15)' }}>
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+                        <AlertTriangle className="text-amber-400" size={16} />
+                      </div>
+                      <div>
+                        <h2 className="font-semibold text-slate-100">{remediationPlan.length} {remediationPlan.length === 1 ? 'vulnerability' : 'vulnerabilities'} found</h2>
+                        <p className="text-xs text-slate-500 mt-0.5">Review each fix below, then approve to remediate</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button onClick={handleStop}
+                        className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-300 border border-white/8 hover:border-white/15 px-4 py-2.5 rounded-xl transition-colors">
+                        <Square size={11} className="fill-current" /> Cancel
+                      </button>
+                      <button onClick={handleApprove}
+                        className="bg-amber-500 hover:bg-amber-400 text-black font-bold text-sm px-6 py-2.5 rounded-xl transition-colors">
+                        Approve all fixes
+                      </button>
                     </div>
                   </div>
-                  <button onClick={handleApprove}
-                    className="bg-amber-500 hover:bg-amber-400 text-black font-semibold text-sm px-5 py-2 rounded-lg transition-colors">
-                    Approve all fixes
-                  </button>
-                </div>
-                <div className="divide-y divide-[#1a2540]">
-                  {remediationPlan.map((item, i) => {
-                    const info = REMEDIATION_INFO[item.toolName];
-                    return (
-                      <div key={i} className="flex items-center gap-4 px-6 py-3">
-                        <span className="text-xl">{info?.icon ?? '🔧'}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-slate-200">{info?.title ?? item.toolName}</p>
-                          <p className="text-xs text-slate-500">{info?.risk}</p>
+                  <div className="divide-y divide-white/6">
+                    {remediationPlan.map((item, i) => {
+                      const info = REMEDIATION_INFO[item.toolName];
+                      return (
+                        <div key={i} className="flex items-center gap-4 px-6 py-3.5">
+                          <span className="text-lg w-6 text-center shrink-0">{info?.icon ?? '🔧'}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-slate-200">{info?.title ?? item.toolName}</p>
+                            <p className="text-xs text-slate-500 mt-0.5">{info?.risk}</p>
+                          </div>
+                          <span className="text-xs font-mono text-red-400 bg-red-950/40 border border-red-800/40 px-2 py-0.5 rounded shrink-0">{item.resource}</span>
                         </div>
-                        <span className="text-xs font-mono text-red-400 bg-red-950/40 border border-red-800/40 px-2 py-0.5 rounded shrink-0">{item.resource}</span>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {SERVICE_ORDER.map(svc => (
+                    <ServiceCard key={svc} svc={svc} items={scanItems[svc] ?? []} isActive={false} scanState={scanState} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── REMEDIATING ── */}
+            {scanState === 'remediating' && (
+              <div className="rounded-2xl border border-white/8 bg-[#111116] p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <span className="w-2 h-2 rounded-full bg-violet-400 animate-pulse" />
+                    <h2 className="font-semibold text-slate-100 text-sm">Applying fixes</h2>
+                  </div>
+                  <span className="text-xs text-slate-500">
+                    {remediationSteps.filter(s => s.status === 'success').length} / {remediationSteps.length} done
+                  </span>
+                </div>
+                {remediationSteps.length > 0 && (
+                  <div className="w-full h-1 rounded-full mb-5 overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                    <div className="h-full rounded-full bg-violet-500 transition-all duration-500"
+                      style={{ width: `${(remediationSteps.filter(s => s.status === 'success').length / remediationSteps.length) * 100}%` }} />
+                  </div>
+                )}
+                <div className="space-y-2">
+                  {remediationSteps.map((step, i) => {
+                    const info = REMEDIATION_INFO[step.funcName];
+                    return (
+                      <div key={i} className={`flex items-center gap-3 px-4 py-3 rounded-lg border text-sm transition-all ${
+                        step.status === 'success' ? 'border-violet-700/40 bg-violet-950/20' :
+                        step.status === 'error'   ? 'border-red-700/40 bg-red-950/20'       :
+                                                    'border-white/6 bg-white/2'
+                      }`}>
+                        <span className="text-base w-5 text-center shrink-0">{info?.icon ?? '🔧'}</span>
+                        <span className="flex-1 text-slate-300">{info?.title ?? step.funcName}</span>
+                        <span className="text-xs font-mono text-slate-600">{step.resource}</span>
+                        {step.status === 'success' && <CheckCircle size={14} className="text-violet-400 shrink-0" />}
+                        {step.status === 'error'   && <XCircle    size={14} className="text-red-400 shrink-0" />}
+                        {step.status === 'running' && <span className="w-3 h-3 rounded-full border-2 border-amber-400 border-t-transparent animate-spin shrink-0" />}
                       </div>
                     );
                   })}
@@ -798,33 +781,90 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Remediating */}
-            {scanState === 'remediating' && (
-              <div className="bg-[#0f1621] border border-[#1a2540] rounded-xl p-6 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="font-semibold text-sm text-slate-200">Applying fixes…</h2>
-                  <span className="text-xs text-slate-500">
-                    {remediationSteps.filter(s => s.status === 'success').length}/{remediationSteps.length} done
-                  </span>
+            {/* ── COMPLETE ── */}
+            {scanState === 'complete' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between px-6 py-4 rounded-2xl border border-violet-700/30 bg-violet-950/20">
+                  <div className="flex items-center gap-4">
+                    <div className="w-9 h-9 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
+                      <CheckCircle size={16} className="text-violet-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-100">Scan complete</p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {fixedCount > 0 ? `${fixedCount} ${fixedCount === 1 ? 'fix' : 'fixes'} applied and verified` : 'No vulnerabilities found'}
+                      </p>
+                    </div>
+                  </div>
+                  <button onClick={startScan}
+                    className="flex items-center gap-2 text-sm bg-violet-500 hover:bg-violet-400 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
+                    <Play size={11} className="fill-current" /> Scan again
+                  </button>
                 </div>
-                <div className="space-y-2">
-                  {remediationSteps.map((step, i) => {
-                    const info = REMEDIATION_INFO[step.funcName];
-                    return (
-                      <div key={i} className={`flex items-center gap-3 px-4 py-3 rounded-lg border text-sm transition-all ${
-                        step.status === 'success' ? 'border-emerald-700/40 bg-emerald-950/20' :
-                        step.status === 'error'   ? 'border-red-700/40 bg-red-950/20'         :
-                                                    'border-amber-700/40 bg-amber-950/20'
-                      }`}>
-                        <span className="text-base">{info?.icon ?? '🔧'}</span>
-                        <span className="flex-1 text-slate-300">{info?.title ?? step.funcName}</span>
-                        <span className="text-xs font-mono text-slate-500">{step.resource}</span>
-                        {step.status === 'success' && <CheckCircle size={14} className="text-emerald-400 shrink-0" />}
-                        {step.status === 'error'   && <XCircle    size={14} className="text-red-400 shrink-0" />}
-                        {step.status === 'running' && <span className="w-3 h-3 rounded-full border-2 border-amber-400 border-t-transparent animate-spin shrink-0" />}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {SERVICE_ORDER.map(svc => (
+                    <ServiceCard key={svc} svc={svc} items={scanItems[svc] ?? []} isActive={false} scanState={scanState} />
+                  ))}
+                </div>
+                {lastScan && (
+                  <div className="flex items-center justify-between px-5 py-3 rounded-xl border border-white/6 text-xs text-slate-600" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                    <span>{lastScan.id}</span>
+                    <span>{new Date(lastScan.start_time).toLocaleString()}</span>
+                    <span>{lastScan.findings_count ?? 0} findings · {lastScan.remediations_count ?? 0} fixed</span>
+                    {lastScan.estimated_cost ? <span>${lastScan.estimated_cost.toFixed(4)}</span> : <span>—</span>}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Protected users: compact pill row ── */}
+            {(scanState === 'idle' || scanState === 'complete') && iamUsers.length > 0 && (
+              <div className="flex items-center justify-between px-5 py-3.5 rounded-xl border border-white/6">
+                <div className="flex items-center gap-3">
+                  <Lock size={13} className="text-slate-600 shrink-0" />
+                  <div>
+                    <p className="text-xs font-medium text-slate-400">Protected IAM users</p>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      {credentialUser && <><span className="font-mono">{credentialUser}</span> always protected · </>}
+                      {protectedUsers.length > 0 ? `${protectedUsers.length} additional selected` : 'none additional'}
+                    </p>
+                  </div>
+                </div>
+                <div className="relative shrink-0" ref={dropdownRef}>
+                  <button onClick={() => setDropdownOpen(v => !v)}
+                    className="flex items-center gap-2 text-xs border border-white/8 bg-[#09090b] hover:bg-white/4 rounded-lg px-3 py-2 transition-colors">
+                    <span className="text-slate-400">
+                      {protectedUsers.length === 0 ? 'Add users…' : `${protectedUsers.length} selected`}
+                    </span>
+                    <ChevronDown size={12} className={`text-slate-500 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {dropdownOpen && (
+                    <div className="absolute right-0 top-full mt-1 w-60 bg-[#111116] border border-white/8 rounded-xl shadow-2xl shadow-black/50 z-10 overflow-hidden">
+                      {credentialUser && (
+                        <div className="flex items-center gap-3 px-4 py-2.5 bg-[#09090b] border-b border-white/6">
+                          <Lock size={11} className="text-slate-600 shrink-0" />
+                          <span className="text-xs font-mono text-slate-500 flex-1 truncate">{credentialUser}</span>
+                          <span className="text-xs text-slate-700">auto</span>
+                        </div>
+                      )}
+                      <div className="max-h-52 overflow-y-auto">
+                        {iamUsers.filter(u => u !== credentialUser).map(u => {
+                          const checked = protectedUsers.includes(u);
+                          return (
+                            <label key={u} className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/3 cursor-pointer transition-colors">
+                              <input type="checkbox" checked={checked}
+                                onChange={() => setProtectedUsers(prev => checked ? prev.filter(x => x !== u) : [...prev, u])}
+                                className="accent-violet-500" />
+                              <span className="text-xs font-mono text-slate-300 truncate">{u}</span>
+                            </label>
+                          );
+                        })}
+                        {iamUsers.filter(u => u !== credentialUser).length === 0 && (
+                          <p className="text-xs text-slate-600 px-4 py-3">No other IAM users found.</p>
+                        )}
                       </div>
-                    );
-                  })}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -835,10 +875,10 @@ export default function Dashboard() {
           {view === 'compliance' && (<>
 
             {/* Score banner */}
-            <div className="bg-[#0f1621] border border-[#1a2540] rounded-xl p-6 flex items-center gap-8 shadow-sm">
+            <div className="bg-[#111116] border border-white/8 rounded-xl p-6 flex items-center gap-8 shadow-sm">
               {cisScore
                 ? <ScoreGauge score={cisScore.score} total={cisScore.total} percentage={cisScore.percentage} />
-                : <div className="w-32 h-32 rounded-full border-8 border-[#1a2540] flex items-center justify-center">
+                : <div className="w-32 h-32 rounded-full border-8 border-white/8 flex items-center justify-center">
                     <span className="text-slate-700 text-xs">Loading…</span>
                   </div>
               }
@@ -851,8 +891,8 @@ export default function Dashboard() {
                 </p>
                 {cisScore && (
                   <div className="flex gap-4 text-xs">
-                    <span className="flex items-center gap-1.5 text-emerald-400">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400" />{cisScore.score} passing
+                    <span className="flex items-center gap-1.5 text-violet-400">
+                      <span className="w-2 h-2 rounded-full bg-violet-400" />{cisScore.score} passing
                     </span>
                     <span className="flex items-center gap-1.5 text-red-400">
                       <span className="w-2 h-2 rounded-full bg-red-400" />{cisScore.total - cisScore.score} failing
@@ -873,11 +913,11 @@ export default function Dashboard() {
                   <div key={check.id} className={`rounded-xl border p-4 shadow-sm ${
                     check.status === 'VULNERABLE'
                       ? 'bg-red-950/20 border-red-800/40'
-                      : 'bg-[#0f1621] border-[#1a2540]'
+                      : 'bg-[#111116] border-white/8'
                   }`}>
                     <div className="flex items-center justify-between mb-3">
-                      <ShieldAlert size={14} className={check.status === 'VULNERABLE' ? 'text-red-400' : 'text-emerald-400'} />
-                      <span className={`text-xs font-medium ${check.status === 'VULNERABLE' ? 'text-red-400' : 'text-emerald-400'}`}>
+                      <ShieldAlert size={14} className={check.status === 'VULNERABLE' ? 'text-red-400' : 'text-violet-400'} />
+                      <span className={`text-xs font-medium ${check.status === 'VULNERABLE' ? 'text-red-400' : 'text-violet-400'}`}>
                         {check.status === 'VULNERABLE' ? 'Vulnerable' : 'Secure'}
                       </span>
                     </div>
@@ -886,7 +926,7 @@ export default function Dashboard() {
                   </div>
                 ))}
                 {checks.length === 0 && [1,2,3,4,5,6,7,8].map(i => (
-                  <div key={i} className="h-24 bg-[#0f1621] border border-[#1a2540] rounded-xl animate-pulse" />
+                  <div key={i} className="h-24 bg-[#111116] border border-white/8 rounded-xl animate-pulse" />
                 ))}
               </div>
             </div>
@@ -900,10 +940,10 @@ export default function Dashboard() {
             <div className="grid grid-cols-3 gap-4">
               {[
                 { label: 'Total scans',  value: metrics?.total_scans  ?? '—', sub: 'all time',      Icon: Activity,   color: 'text-slate-100'   },
-                { label: 'Success rate', value: metrics?.success_rate ?? '—', sub: 'fixes applied', Icon: TrendingUp, color: 'text-emerald-400' },
+                { label: 'Success rate', value: metrics?.success_rate ?? '—', sub: 'fixes applied', Icon: TrendingUp, color: 'text-violet-400' },
                 { label: 'Avg fix time', value: metrics?.avg_mttr     ?? '—', sub: 'per scan',      Icon: Clock,      color: 'text-slate-100'   },
               ].map(({ label, value, sub, Icon, color }) => (
-                <div key={label} className="bg-[#0f1621] border border-[#1a2540] rounded-xl p-5 shadow-sm">
+                <div key={label} className="bg-[#111116] border border-white/8 rounded-xl p-5 shadow-sm">
                   <div className="flex items-center justify-between mb-3">
                     <p className="text-xs text-slate-500 font-medium">{label}</p>
                     <Icon size={14} className="text-slate-700" />
@@ -916,10 +956,10 @@ export default function Dashboard() {
 
             {/* History table */}
             {scanHistory.length > 0 ? (
-              <div className="bg-[#0f1621] border border-[#1a2540] rounded-xl overflow-hidden shadow-sm">
+              <div className="bg-[#111116] border border-white/8 rounded-xl overflow-hidden shadow-sm">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-[#1a2540] bg-[#080d18]">
+                    <tr className="border-b border-white/8 bg-[#09090b]">
                       <th className="text-left px-5 py-3 text-xs font-medium text-slate-600">Scan ID</th>
                       <th className="text-left px-5 py-3 text-xs font-medium text-slate-600">Time</th>
                       <th className="text-right px-5 py-3 text-xs font-medium text-slate-600">Findings</th>
@@ -928,13 +968,13 @@ export default function Dashboard() {
                       <th className="text-right px-5 py-3 text-xs font-medium text-slate-600">Status</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[#1a2540]">
+                  <tbody className="divide-y divide-white/8">
                     {scanHistory.map(scan => (
-                      <tr key={scan.id} className="hover:bg-[#0b1120] transition-colors">
+                      <tr key={scan.id} className="hover:bg-[#0d0d10] transition-colors">
                         <td className="px-5 py-3 font-mono text-xs text-slate-400">{scan.id}</td>
                         <td className="px-5 py-3 text-xs text-slate-500">{new Date(scan.start_time).toLocaleString()}</td>
                         <td className="px-5 py-3 text-right text-xs text-slate-400">{scan.findings_count ?? 0}</td>
-                        <td className="px-5 py-3 text-right text-xs text-emerald-400 font-medium">
+                        <td className="px-5 py-3 text-right text-xs text-violet-400 font-medium">
                           {Math.min(scan.remediations_count ?? 0, scan.findings_count ?? 0)}
                         </td>
                         <td className="px-5 py-3 text-right text-xs text-slate-500 font-mono">
@@ -942,7 +982,7 @@ export default function Dashboard() {
                         </td>
                         <td className="px-5 py-3 text-right">
                           <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${
-                            scan.verified               ? 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40' :
+                            scan.verified               ? 'bg-violet-500/10 text-violet-400 border-violet-700/40' :
                             scan.status === 'COMPLETED' ? 'bg-blue-500/10 text-blue-400 border-blue-700/40'         :
                             scan.status === 'ABORTED'   ? 'bg-slate-800 text-slate-400 border-slate-700'            :
                             'bg-red-500/10 text-red-400 border-red-700/40'
@@ -956,7 +996,7 @@ export default function Dashboard() {
                 </table>
               </div>
             ) : (
-              <div className="bg-[#0f1621] border border-[#1a2540] rounded-xl p-10 flex flex-col items-center text-center">
+              <div className="bg-[#111116] border border-white/8 rounded-xl p-10 flex flex-col items-center text-center">
                 <History size={28} className="text-slate-700 mb-3" />
                 <p className="text-sm text-slate-500">No scans yet. Run your first scan from the Overview tab.</p>
               </div>

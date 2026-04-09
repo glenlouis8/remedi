@@ -15,6 +15,9 @@ class AgentState(TypedDict):
     # The human MUST update this to "approve" to allow remediation.
     safety_decision: str
 
+    # Optional list of resource names the human approved — if None, all are approved
+    approved_resources: Optional[List[str]]
+
     # 3. Audit Artifacts
     # A generated summary of what was found (populated by Auditor before pause)
     audit_summary: Optional[str]

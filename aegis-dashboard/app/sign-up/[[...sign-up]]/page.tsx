@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ShieldCheck, CheckCircle, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 
+const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');`;
+
 function GoogleIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
@@ -25,6 +27,10 @@ function GitHubIcon() {
   );
 }
 
+const inputClass = "w-full rounded-lg px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none transition-colors";
+const inputStyle = { background: 'rgba(14,14,18,0.9)', border: '1px solid rgba(255,255,255,0.08)', fontFamily: "'JetBrains Mono', monospace" };
+const inputFocusStyle = { outline: 'none', borderColor: 'rgba(139,92,246,0.4)', boxShadow: '0 0 0 3px rgba(139,92,246,0.08)' };
+
 export default function SignUpPage() {
   const { signUp, setActive, isLoaded } = useSignUp();
   const { isSignedIn } = useAuth();
@@ -42,6 +48,7 @@ export default function SignUpPage() {
   const [loading, setLoading]   = useState(false);
   const [oauthLoading, setOauthLoading] = useState<'google' | 'github' | null>(null);
   const [error, setError]       = useState('');
+  const [focusedField, setFocusedField] = useState<string | null>(null);
 
   const handleOAuth = async (provider: 'oauth_google' | 'oauth_github') => {
     if (!isLoaded) return;
@@ -53,7 +60,6 @@ export default function SignUpPage() {
         redirectUrlComplete: '/onboarding',
       });
     } catch (err: unknown) {
-      console.error('OAuth error:', err);
       const msg = (err as { errors?: { message: string }[] })?.errors?.[0]?.message;
       setError(msg ?? 'OAuth sign-up failed. Please try again.');
       setOauthLoading(null);
@@ -97,16 +103,29 @@ export default function SignUpPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex">
+    <div className="min-h-screen flex" style={{ background: '#09090b', fontFamily: "'Space Grotesk', sans-serif" }}>
+      <style>{FONTS}</style>
+
+      {/* Grid background */}
+      <div className="fixed inset-0 pointer-events-none" style={{
+        backgroundImage: 'linear-gradient(rgba(139,92,246,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(139,92,246,0.04) 1px, transparent 1px)',
+        backgroundSize: '40px 40px'
+      }} />
 
       {/* Left panel */}
-      <div className="hidden lg:flex flex-col justify-between w-1/2 bg-white border-r border-slate-200 px-12 py-10">
-        <Link href="/" className="flex items-center gap-2">
-          <ShieldCheck className="text-emerald-600" size={20} />
-          <span className="font-semibold text-slate-900 tracking-tight">Remedi</span>
+      <div className="hidden lg:flex flex-col justify-between w-5/12 px-12 py-10 relative" style={{ borderRight: '1px solid rgba(255,255,255,0.05)' }}>
+        <div className="absolute top-0 left-0 w-full h-full pointer-events-none" style={{ background: 'rgba(139,92,246,0.02)' }} />
+        <div className="absolute top-0 right-0 w-px h-full" style={{ background: 'linear-gradient(to bottom, transparent, rgba(139,92,246,0.15), transparent)' }} />
+
+        <Link href="/" className="relative flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.25)' }}>
+            <ShieldCheck size={16} className="text-violet-400" />
+          </div>
+          <span className="font-semibold text-white tracking-tight">Remedi</span>
         </Link>
-        <div>
-          <p className="text-2xl font-semibold text-slate-900 leading-snug mb-3">
+
+        <div className="relative">
+          <p className="text-2xl font-semibold text-white leading-snug mb-3">
             Set up in under 5 minutes.
           </p>
           <p className="text-slate-500 text-sm mb-8">
@@ -119,35 +138,41 @@ export default function SignUpPage() {
               'Nothing changes without your approval',
               'Open-source foundation, auditable code',
             ].map(item => (
-              <div key={item} className="flex items-center gap-3 text-sm text-slate-500">
-                <CheckCircle size={15} className="text-emerald-500 shrink-0" />
+              <div key={item} className="flex items-center gap-3 text-sm text-slate-400">
+                <CheckCircle size={14} className="text-violet-500 shrink-0" />
                 {item}
               </div>
             ))}
           </div>
         </div>
-        <p className="text-xs text-slate-400">© {new Date().getFullYear()} Remedi</p>
+
+        <p className="relative text-xs text-slate-700" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+          © {new Date().getFullYear()} Remedi
+        </p>
       </div>
 
       {/* Right panel */}
-      <div className="flex flex-1 items-center justify-center px-6 py-12">
+      <div className="flex flex-1 items-center justify-center px-6 py-12 relative">
         <div className="w-full max-w-sm">
 
           <div className="flex lg:hidden items-center gap-2 mb-8">
-            <ShieldCheck className="text-emerald-600" size={18} />
-            <span className="font-semibold text-slate-900">Remedi</span>
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.25)' }}>
+              <ShieldCheck size={14} className="text-violet-400" />
+            </div>
+            <span className="font-semibold text-white">Remedi</span>
           </div>
 
           {step === 'details' ? (
             <>
-              <h1 className="text-2xl font-bold text-slate-900 mb-1">Create your account</h1>
+              <h1 className="text-2xl font-bold text-white mb-1">Create your account</h1>
               <p className="text-sm text-slate-500 mb-8">Get started for free</p>
 
               <div className="space-y-3 mb-6">
                 <button
                   onClick={() => handleOAuth('oauth_google')}
                   disabled={!!oauthLoading}
-                  className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-50 disabled:opacity-60 text-slate-700 font-medium py-2.5 rounded-lg transition-colors text-sm border border-slate-200 shadow-sm"
+                  className="w-full flex items-center justify-center gap-3 font-medium py-2.5 rounded-lg transition-all text-sm disabled:opacity-50"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#e2e8f0' }}
                 >
                   <GoogleIcon />
                   {oauthLoading === 'google' ? 'Redirecting…' : 'Continue with Google'}
@@ -155,7 +180,8 @@ export default function SignUpPage() {
                 <button
                   onClick={() => handleOAuth('oauth_github')}
                   disabled={!!oauthLoading}
-                  className="w-full flex items-center justify-center gap-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg transition-colors text-sm"
+                  className="w-full flex items-center justify-center gap-3 font-medium py-2.5 rounded-lg transition-all text-sm disabled:opacity-50"
+                  style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)', color: '#e2e8f0' }}
                 >
                   <GitHubIcon />
                   {oauthLoading === 'github' ? 'Redirecting…' : 'Continue with GitHub'}
@@ -163,46 +189,52 @@ export default function SignUpPage() {
               </div>
 
               <div className="flex items-center gap-3 mb-6">
-                <div className="flex-1 h-px bg-slate-200" />
-                <span className="text-xs text-slate-400">or</span>
-                <div className="flex-1 h-px bg-slate-200" />
+                <div className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                <span className="text-xs text-slate-600">or</span>
+                <div className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
               </div>
 
               <form onSubmit={handleSignUp} className="space-y-4" autoComplete="off">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Email</label>
+                  <label className="block text-sm font-medium text-slate-400 mb-1.5">Email</label>
                   <input
                     type="email"
                     value={email}
                     onChange={e => setEmail(e.target.value)}
+                    onFocus={() => setFocusedField('email')}
+                    onBlur={() => setFocusedField(null)}
                     placeholder="you@example.com"
                     required
                     autoComplete="off"
-                    className="w-full bg-white border border-slate-200 rounded-lg px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
+                    className={inputClass}
+                    style={{ ...inputStyle, ...(focusedField === 'email' ? inputFocusStyle : {}) }}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
+                  <label className="block text-sm font-medium text-slate-400 mb-1.5">Password</label>
                   <div className="relative">
                     <input
                       type={showPw ? 'text' : 'password'}
                       value={password}
                       onChange={e => setPassword(e.target.value)}
+                      onFocus={() => setFocusedField('password')}
+                      onBlur={() => setFocusedField(null)}
                       placeholder="••••••••"
                       required
                       minLength={8}
                       autoComplete="new-password"
-                      className="w-full bg-white border border-slate-200 rounded-lg px-4 py-2.5 pr-10 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
+                      className={inputClass + ' pr-10'}
+                      style={{ ...inputStyle, ...(focusedField === 'password' ? inputFocusStyle : {}) }}
                     />
-                    <button type="button" onClick={() => setShowPw(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                      {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+                    <button type="button" onClick={() => setShowPw(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400 transition-colors">
+                      {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>
                   </div>
                 </div>
 
                 {error && (
-                  <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2.5">
+                  <div className="flex items-center gap-2 text-red-400 text-sm rounded-lg px-3 py-2.5" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
                     <AlertTriangle size={14} className="shrink-0" />
                     {error}
                   </div>
@@ -213,40 +245,44 @@ export default function SignUpPage() {
                 <button
                   type="submit"
                   disabled={loading || !!oauthLoading}
-                  className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-lg transition-colors text-sm"
+                  className="w-full text-white font-semibold py-2.5 rounded-lg transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ background: 'rgba(139,92,246,1)', boxShadow: '0 0 20px rgba(139,92,246,0.2)' }}
                 >
                   {loading ? 'Creating account…' : 'Create account'}
                 </button>
               </form>
 
-              <p className="text-sm text-slate-500 text-center mt-6">
+              <p className="text-sm text-slate-600 text-center mt-6">
                 Already have an account?{' '}
-                <Link href="/sign-in" className="text-emerald-600 hover:underline font-medium">Sign in</Link>
+                <Link href="/sign-in" className="text-violet-400 hover:text-violet-300 font-medium transition-colors">Sign in</Link>
               </p>
             </>
           ) : (
             <>
-              <h1 className="text-2xl font-bold text-slate-900 mb-1">Check your email</h1>
+              <h1 className="text-2xl font-bold text-white mb-1">Check your email</h1>
               <p className="text-sm text-slate-500 mb-8">
-                We sent a 6-digit code to <span className="text-slate-900 font-medium">{email}</span>
+                We sent a 6-digit code to <span className="text-slate-300 font-medium">{email}</span>
               </p>
 
               <form onSubmit={handleVerify} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Verification code</label>
+                  <label className="block text-sm font-medium text-slate-400 mb-1.5">Verification code</label>
                   <input
                     type="text"
                     inputMode="numeric"
                     value={code}
                     onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    onFocus={() => setFocusedField('code')}
+                    onBlur={() => setFocusedField(null)}
                     placeholder="123456"
                     required
-                    className="w-full bg-white border border-slate-200 rounded-lg px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 tracking-widest font-mono text-center text-lg"
+                    className={inputClass + ' tracking-[0.5em] text-center text-lg'}
+                    style={{ ...inputStyle, ...(focusedField === 'code' ? inputFocusStyle : {}) }}
                   />
                 </div>
 
                 {error && (
-                  <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2.5">
+                  <div className="flex items-center gap-2 text-red-400 text-sm rounded-lg px-3 py-2.5" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
                     <AlertTriangle size={14} className="shrink-0" />
                     {error}
                   </div>
@@ -255,7 +291,8 @@ export default function SignUpPage() {
                 <button
                   type="submit"
                   disabled={loading || code.length < 6}
-                  className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-lg transition-colors text-sm"
+                  className="w-full text-white font-semibold py-2.5 rounded-lg transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ background: 'rgba(139,92,246,1)', boxShadow: '0 0 20px rgba(139,92,246,0.2)' }}
                 >
                   {loading ? 'Verifying…' : 'Verify email'}
                 </button>
@@ -263,7 +300,7 @@ export default function SignUpPage() {
                 <button
                   type="button"
                   onClick={() => { setStep('details'); setError(''); setCode(''); }}
-                  className="w-full text-sm text-slate-400 hover:text-slate-600 transition-colors"
+                  className="w-full text-sm text-slate-600 hover:text-slate-400 transition-colors"
                 >
                   ← Back
                 </button>

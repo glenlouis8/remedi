@@ -45,11 +45,11 @@ body {
 .shimmer-bar {
   background: linear-gradient(
     90deg,
-    #d1fae5 0%,
-    #6ee7b7 30%,
-    #10b981 50%,
-    #6ee7b7 70%,
-    #d1fae5 100%
+    #ede9fe 0%,
+    #c4b5fd 30%,
+    #8b5cf6 50%,
+    #c4b5fd 70%,
+    #ede9fe 100%
   );
   background-size: 200% auto;
   animation: shimmer 1.8s linear infinite;

@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Creates a remedi-agent IAM user with the minimum permissions required
+  for Remedi to scan and remediate your AWS account.
+  Delete this stack when done to immediately revoke all access.
+
+Resources:
+
+  RemediUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: remedi-agent
+
+  RemediPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: RemediAgentPolicy
+      Users:
+        - !Ref RemediUser
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+
+          # --- AUDIT (read-only) ---
+          - Sid: RemediAudit
+            Effect: Allow
+            Resource: '*'
+            Action:
+              - sts:GetCallerIdentity
+              - iam:ListUsers
+              - iam:ListAttachedUserPolicies
+              - iam:ListUserPolicies
+              - iam:GetRolePolicy
+              - iam:ListAttachedRolePolicies
+              - iam:ListRolePolicies
+              - s3:ListAllMyBuckets
+              - s3:GetBucketPublicAccessBlock
+              - s3:GetBucketAcl
+              - s3:GetBucketPolicy
+              - ec2:DescribeVpcs
+              - ec2:DescribeFlowLogs
+              - ec2:DescribeSecurityGroups
+              - ec2:DescribeInstances
+              - rds:DescribeDBInstances
+              - lambda:ListFunctions
+              - lambda:GetFunction
+              - cloudtrail:DescribeTrails
+              - cloudtrail:GetTrailStatus
+              - logs:DescribeLogGroups
+
+          # --- REMEDIATION (write) ---
+          - Sid: RemediRemediate
+            Effect: Allow
+            Resource: '*'
+            Action:
+              - iam:DetachUserPolicy
+              - iam:DetachRolePolicy
+              - iam:AttachRolePolicy
+              - iam:DeleteRolePolicy
+              - iam:CreateRole
+              - iam:PutRolePolicy
+              - iam:PassRole
+              - s3:PutPublicAccessBlock
+              - s3:CreateBucket
+              - s3:PutBucketPolicy
+              - ec2:CreateFlowLogs
+              - ec2:RevokeSecurityGroupIngress
+              - ec2:ModifyInstanceMetadataOptions
+              - ec2:StopInstances
+              - rds:ModifyDBInstance
+              - cloudtrail:CreateTrail
+              - cloudtrail:StartLogging
+              - logs:CreateLogGroup
+
+  RemediAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref RemediUser
+
+Outputs:
+  AccessKeyId:
+    Description: AWS Access Key ID — paste this into Remedi
+    Value: !Ref RemediAccessKey
+
+  SecretAccessKey:
+    Description: AWS Secret Access Key — paste this into Remedi
+    Value: !GetAtt RemediAccessKey.SecretAccessKey
+
+  Instructions:
+    Description: Next steps
+    Value: >
+      Copy the AccessKeyId and SecretAccessKey above into Remedi.
+      When you are done, delete this CloudFormation stack to immediately
+      revoke all access and delete the remedi-agent IAM user.

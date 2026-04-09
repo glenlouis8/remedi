@@ -608,6 +608,18 @@ def remediate_lambda_role(function_name: str) -> str:
                     iam.detach_role_policy(RoleName=role_name, PolicyArn=policy["PolicyArn"])
                     log.append(f"Detached {policy['PolicyName']}")
 
+        for p_page in iam.get_paginator("list_role_policies").paginate(RoleName=role_name):
+            for policy_name in p_page["PolicyNames"]:
+                doc = iam.get_role_policy(RoleName=role_name, PolicyName=policy_name)
+                for stmt in doc["PolicyDocument"].get("Statement", []):
+                    actions = stmt.get("Action", [])
+                    if isinstance(actions, str):
+                        actions = [actions]
+                    if "*" in actions and stmt.get("Effect") == "Allow":
+                        iam.delete_role_policy(RoleName=role_name, PolicyName=policy_name)
+                        log.append(f"Deleted wildcard inline policy '{policy_name}'")
+                        break
+
         basic_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
         iam.attach_role_policy(RoleName=role_name, PolicyArn=basic_arn)
         log.append("Attached AWSLambdaBasicExecutionRole")
@@ -679,7 +691,7 @@ def remediate_cloudtrail(trail_name: str = "remedi-audit-trail") -> str:
         if not trails:
             # No trails — create one from scratch
             account_id = sts.get_caller_identity()["Account"]
-            region = boto3.session.Session().region_name or "us-east-1"
+            region = boto3.Session().region_name or "us-east-1"
             bucket_name = f"remedi-cloudtrail-{account_id}-{region}"
 
             # Create the S3 bucket
@@ -770,17 +782,6 @@ def get_resource_owner(resource_name: str) -> str:
         return f"Forensic Error: {str(e)}"
 
 
-# @mcp.tool()
-# def archive_security_incident(report_summary: str) -> str:
-#     """Saves findings to JSON."""
-#     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-#     filename = f"aegis_audit_{timestamp}.json"
-#     try:
-#         with open(filename, "w") as f:
-#             json.dump({"timestamp": timestamp, "report": report_summary}, f, indent=4)
-#         return f"SUCCESS: Report saved to {filename}."
-#     except Exception as e:
-#         return f"ERROR: {str(e)}"
 
 if __name__ == "__main__":
     mcp.run()
