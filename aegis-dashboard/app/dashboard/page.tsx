@@ -305,9 +305,10 @@ export default function Dashboard() {
     abortRef.current = controller;
     let wasAborted = false;
     let hadVulns   = false;
-    // Local mirror of remediation steps — updated synchronously so finally can read it
-    // without depending on React's async state batching.
     const tracker: { resource: string; status: 'running' | 'success' | 'error' }[] = [];
+    // Local accumulator for scan items — avoids React batching causing old state
+    // to leak into new scans when using the functional updater (prev => ...).
+    const localItems: Partial<Record<ServiceKey, ScanItem[]>> = {};
 
     try {
       const token = await getToken();
@@ -335,10 +336,12 @@ export default function Dashboard() {
               const svc = event.service as ServiceKey;
               if (SERVICE_META[svc]) {
                 setActiveService(svc);
-                setScanItems(prev => ({
-                  ...prev,
-                  [svc]: [...(prev[svc] ?? []), { resource: event.resource, status: event.status, msg: event.msg ?? '' }],
-                }));
+                if (!localItems[svc]) localItems[svc] = [];
+                const alreadyHas = localItems[svc]!.some(i => i.resource === event.resource);
+                if (!alreadyHas) {
+                  localItems[svc]!.push({ resource: event.resource, status: event.status, msg: event.msg ?? '' });
+                  setScanItems({ ...localItems });
+                }
               }
             } catch { /* malformed */ }
             continue;
@@ -409,15 +412,12 @@ export default function Dashboard() {
         // Uses the local tracker (not React state) to avoid async batching issues.
         const fixed = new Set(tracker.filter(s => s.status === 'success').map(s => s.resource));
         if (fixed.size > 0) {
-          setScanItems(prev => {
-            const updated: Partial<Record<ServiceKey, ScanItem[]>> = {};
-            for (const [svc, items] of Object.entries(prev)) {
-              updated[svc as ServiceKey] = items.map(item =>
-                fixed.has(item.resource) ? { ...item, status: 'ok' } : item
-              );
-            }
-            return updated;
-          });
+          for (const svc of Object.keys(localItems) as ServiceKey[]) {
+            localItems[svc] = localItems[svc]!.map(item =>
+              fixed.has(item.resource) ? { ...item, status: 'ok' } : item
+            );
+          }
+          setScanItems({ ...localItems });
         }
       }
     }
