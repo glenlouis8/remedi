@@ -202,6 +202,7 @@ export default function Dashboard() {
   const [activeService, setActiveService]       = useState<ServiceKey | null>(null);
   const [remediationPlan, setRemediationPlan]   = useState<{ toolName: string; resource: string }[]>([]);
   const [remediationSteps, setRemediationSteps] = useState<RemediationStep[]>([]);
+  const [approvedItems, setApprovedItems]       = useState<Set<string>>(new Set());
   const [showSuccess, setShowSuccess]           = useState(false);
 
   const [expandedScanId, setExpandedScanId] = useState<string | null>(null);
@@ -350,6 +351,11 @@ export default function Dashboard() {
           if (raw.includes('[ACTION_REQUIRED] WAITING_FOR_APPROVAL')) {
             setActiveService(null);
             setScanState('awaiting_approval');
+            // Default: all findings approved
+            setRemediationPlan(prev => {
+              setApprovedItems(new Set(prev.map(p => p.resource)));
+              return prev;
+            });
           }
 
           if (raw.includes('[CRITICAL]') || raw.includes('[POLICY VIOLATION]') || raw.includes('[HIGH]')) {
@@ -462,7 +468,12 @@ export default function Dashboard() {
   const handleApprove = async () => {
     setScanState('remediating');
     const token = await getToken();
-    await fetch(`${API}/api/approve`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    const approved = Array.from(approvedItems);
+    await fetch(`${API}/api/approve`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved_resources: approved }),
+    });
   };
 
   const handleStop = async () => {
@@ -695,83 +706,158 @@ export default function Dashboard() {
 
             {/* ── SCANNING ── */}
             {scanState === 'scanning' && (
-              <div>
-                <div className="flex items-center justify-between mb-4">
+              <div className="rounded-2xl border border-white/8 bg-[#111116] overflow-hidden">
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 py-4 border-b border-white/6">
                   <div className="flex items-center gap-3">
-                    <span className="w-2 h-2 rounded-full bg-violet-400 animate-pulse shrink-0" />
-                    <span className="text-sm font-medium text-slate-200">
-                      {activeService ? `Scanning ${SERVICE_META[activeService].label}…` : 'Initializing scan…'}
-                    </span>
+                    <div className="relative flex items-center justify-center w-6 h-6">
+                      <span className="absolute w-full h-full rounded-full bg-violet-500/20 animate-ping" />
+                      <span className="w-2 h-2 rounded-full bg-violet-400 relative z-10" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-100">
+                        {activeService ? `Scanning ${SERVICE_META[activeService].label}` : 'Initializing…'}
+                      </p>
+                      <p className="text-xs text-slate-600 mt-0.5">
+                        {Object.keys(scanItems).length} of {SERVICE_ORDER.length} services complete
+                      </p>
+                    </div>
                   </div>
                   <button onClick={handleStop}
-                    className="flex items-center gap-1.5 text-xs text-red-400 border border-red-800/40 px-3 py-1.5 rounded-lg hover:bg-red-950/20 transition-colors">
+                    className="flex items-center gap-1.5 text-xs text-red-400 border border-red-900/50 bg-red-950/20 px-3 py-1.5 rounded-lg hover:bg-red-950/40 transition-colors">
                     <Square size={10} className="fill-current" /> Stop
                   </button>
                 </div>
-                <div className="w-full h-0.5 rounded-full overflow-hidden mb-4" style={{ background: 'rgba(139,92,246,0.1)' }}>
-                  <div className="h-full shimmer-bar rounded-full" />
+
+                {/* Progress bar */}
+                <div className="h-px w-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                  <div className="h-full bg-violet-500/60 transition-all duration-700"
+                    style={{ width: `${(Object.keys(scanItems).length / SERVICE_ORDER.length) * 100}%` }} />
                 </div>
-                <div className="relative rounded-2xl overflow-hidden">
-                  <div className="scan-beam pointer-events-none absolute inset-x-0 z-10"
-                    style={{
-                      height: '2px',
-                      background: 'linear-gradient(90deg, transparent 0%, #c4b5fd 20%, #8b5cf6 50%, #c4b5fd 80%, transparent 100%)',
-                      boxShadow: '0 0 12px 4px rgba(139,92,246,0.35), 0 0 40px 8px rgba(139,92,246,0.12)',
-                    }} />
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-0.5">
-                    {SERVICE_ORDER.map(svc => (
-                      <ServiceCard key={svc} svc={svc} items={scanItems[svc] ?? []} isActive={activeService === svc} scanState={scanState} />
-                    ))}
-                  </div>
+
+                {/* Service rows */}
+                <div className="divide-y divide-white/4">
+                  {SERVICE_ORDER.map(svc => {
+                    const { label, Icon } = SERVICE_META[svc];
+                    const items    = scanItems[svc];
+                    const isActive = activeService === svc;
+                    const isDone   = !!items;
+                    const vulns    = items?.filter(i => i.status === 'vulnerable') ?? [];
+
+                    return (
+                      <div key={svc} className={`flex items-center gap-4 px-5 py-3 transition-colors ${isActive ? 'bg-violet-950/20' : ''}`}>
+                        <Icon size={13} className={isActive ? 'text-violet-400' : isDone ? 'text-slate-500' : 'text-slate-700'} />
+                        <span className={`text-sm flex-1 ${isActive ? 'text-slate-100' : isDone ? 'text-slate-400' : 'text-slate-700'}`}
+                          style={{ fontFamily: "'JetBrains Mono', monospace" }}>{label}</span>
+
+                        {isActive && (
+                          <span className="flex items-center gap-1.5 text-xs text-violet-400">
+                            <span className="w-3 h-3 rounded-full border-2 border-violet-400 border-t-transparent animate-spin" />
+                            scanning
+                          </span>
+                        )}
+                        {isDone && vulns.length > 0 && (
+                          <span className="text-xs font-medium text-red-400 bg-red-950/40 border border-red-800/30 px-2 py-0.5 rounded">
+                            {vulns.length} {vulns.length === 1 ? 'issue' : 'issues'}
+                          </span>
+                        )}
+                        {isDone && vulns.length === 0 && (
+                          <span className="flex items-center gap-1 text-xs text-slate-600">
+                            <CheckCircle size={11} className="text-slate-600" /> clean
+                          </span>
+                        )}
+                        {!isDone && !isActive && (
+                          <span className="text-xs text-slate-800">—</span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
 
             {/* ── AWAITING APPROVAL ── */}
             {scanState === 'awaiting_approval' && (
-              <div className="space-y-4">
-                <div className="rounded-2xl border border-amber-700/40 overflow-hidden">
-                  <div className="flex items-center justify-between px-6 py-5 border-b border-amber-800/20" style={{ background: 'rgba(120,53,15,0.15)' }}>
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
-                        <AlertTriangle className="text-amber-400" size={16} />
-                      </div>
-                      <div>
-                        <h2 className="font-semibold text-slate-100">{remediationPlan.length} {remediationPlan.length === 1 ? 'vulnerability' : 'vulnerabilities'} found</h2>
-                        <p className="text-xs text-slate-500 mt-0.5">Review each fix below, then approve to remediate</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button onClick={handleStop}
-                        className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-300 border border-white/8 hover:border-white/15 px-4 py-2.5 rounded-xl transition-colors">
-                        <Square size={11} className="fill-current" /> Cancel
-                      </button>
-                      <button onClick={handleApprove}
-                        className="bg-amber-500 hover:bg-amber-400 text-black font-bold text-sm px-6 py-2.5 rounded-xl transition-colors">
-                        Approve all fixes
-                      </button>
+              <div className="space-y-3">
+
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 py-4 rounded-2xl border border-amber-700/30 bg-amber-950/10">
+                  <div className="flex items-center gap-3">
+                    <AlertTriangle size={15} className="text-amber-400 shrink-0" />
+                    <div>
+                      <p className="text-sm font-semibold text-slate-100">
+                        {remediationPlan.length} {remediationPlan.length === 1 ? 'vulnerability' : 'vulnerabilities'} detected
+                      </p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {approvedItems.size} of {remediationPlan.length} selected for remediation
+                      </p>
                     </div>
                   </div>
-                  <div className="divide-y divide-white/6">
-                    {remediationPlan.map((item, i) => {
-                      const info = REMEDIATION_INFO[item.toolName];
-                      return (
-                        <div key={i} className="flex items-center gap-4 px-6 py-3.5">
-                          <span className="text-lg w-6 text-center shrink-0">{info?.icon ?? '🔧'}</span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-slate-200">{info?.title ?? item.toolName}</p>
-                            <p className="text-xs text-slate-500 mt-0.5">{info?.risk}</p>
-                          </div>
-                          <span className="text-xs font-mono text-red-400 bg-red-950/40 border border-red-800/40 px-2 py-0.5 rounded shrink-0">{item.resource}</span>
-                        </div>
-                      );
-                    })}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button onClick={handleStop}
+                      className="text-xs text-slate-500 hover:text-slate-300 border border-white/8 hover:border-white/15 px-3 py-2 rounded-lg transition-colors">
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleApprove}
+                      disabled={approvedItems.size === 0}
+                      className="flex items-center gap-2 text-sm font-semibold bg-violet-500 hover:bg-violet-400 disabled:opacity-40 disabled:cursor-not-allowed text-white px-5 py-2 rounded-lg transition-colors">
+                      Apply {approvedItems.size} {approvedItems.size === 1 ? 'fix' : 'fixes'}
+                    </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {SERVICE_ORDER.map(svc => (
-                    <ServiceCard key={svc} svc={svc} items={scanItems[svc] ?? []} isActive={false} scanState={scanState} />
-                  ))}
+
+                {/* Per-finding cards */}
+                <div className="space-y-2">
+                  {remediationPlan.map((item, i) => {
+                    const info      = REMEDIATION_INFO[item.toolName];
+                    const isApproved = approvedItems.has(item.resource);
+                    return (
+                      <div key={i} className={`rounded-xl border transition-all duration-200 overflow-hidden ${
+                        isApproved ? 'border-violet-700/40 bg-[#111116]' : 'border-white/6 bg-[#0d0d10] opacity-50'
+                      }`}>
+                        <div className="flex items-start gap-4 px-5 py-4">
+                          {/* Icon */}
+                          <div className={`w-9 h-9 rounded-lg border flex items-center justify-center text-base shrink-0 mt-0.5 ${
+                            isApproved ? 'bg-violet-500/10 border-violet-500/20' : 'bg-white/4 border-white/8'
+                          }`}>
+                            {info?.icon ?? '🔧'}
+                          </div>
+
+                          {/* Details */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-semibold text-slate-100">{info?.title ?? item.toolName}</p>
+                              <span className="text-xs font-mono text-slate-500 bg-white/4 border border-white/8 px-2 py-0.5 rounded">
+                                {item.resource}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-1 leading-relaxed">{info?.risk ?? 'Vulnerability detected'}</p>
+                            <p className="text-xs text-slate-700 mt-1">
+                              Fix: <span className="text-slate-500 font-mono">{item.toolName}</span>
+                            </p>
+                          </div>
+
+                          {/* Toggle */}
+                          <button
+                            onClick={() => setApprovedItems(prev => {
+                              const next = new Set(prev);
+                              if (next.has(item.resource)) next.delete(item.resource);
+                              else next.add(item.resource);
+                              return next;
+                            })}
+                            className={`shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
+                              isApproved
+                                ? 'bg-violet-500/15 border-violet-500/30 text-violet-300 hover:bg-red-950/20 hover:border-red-700/30 hover:text-red-400'
+                                : 'bg-white/4 border-white/8 text-slate-500 hover:bg-violet-500/10 hover:border-violet-500/20 hover:text-violet-400'
+                            }`}
+                          >
+                            {isApproved ? 'Approved' : 'Skipped'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
