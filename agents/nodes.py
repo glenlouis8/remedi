@@ -345,8 +345,8 @@ def report_generator_node(state: AgentState):
     # Count total findings — one per 🔴 line in the plan
     findings_count = len(re.findall(r'I will call `?\w+`?', clean_content)) or clean_content.count("🔴")
 
-    # Single update call instead of two
-    update_scan(scan_id, findings_count=findings_count, total_tokens=state.get("total_tokens", 0) + tokens)
+    # Single update call instead of two — also persist the audit summary for history detail view
+    update_scan(scan_id, findings_count=findings_count, total_tokens=state.get("total_tokens", 0) + tokens, audit_summary=clean_content)
 
     # Update CIS compliance checks based on scan findings
     _SERVICE_TO_CIS = {

@@ -7,7 +7,7 @@ import Link from 'next/link';
 import {
   ShieldCheck, ShieldAlert, Play, Square, CheckCircle, XCircle,
   AlertTriangle, Users, HardDrive, Globe, Shield,
-  Server, Database, Zap, FileText, Lock, ChevronDown,
+  Server, Database, Zap, FileText, Lock, ChevronDown, ChevronRight,
   LayoutDashboard, History, LogOut, Clock,
   Activity, TrendingUp,
 } from 'lucide-react';
@@ -33,7 +33,18 @@ interface ScanHistoryItem {
   remediations_count: number;
   status: string;
   verified: boolean;
-  estimated_cost?: number;
+}
+interface RemediationLog { resource_name: string; action: string; status: string; duration: number; timestamp: string }
+interface ScanDetail {
+  id: string;
+  start_time: string;
+  end_time?: string;
+  findings_count: number;
+  remediations_count: number;
+  status: string;
+  verified: boolean;
+  audit_summary?: string;
+  remediations: RemediationLog[];
 }
 interface RemediationStep { funcName: string; resource: string; status: 'running' | 'success' | 'error' }
 
@@ -192,6 +203,10 @@ export default function Dashboard() {
   const [remediationPlan, setRemediationPlan]   = useState<{ toolName: string; resource: string }[]>([]);
   const [remediationSteps, setRemediationSteps] = useState<RemediationStep[]>([]);
   const [showSuccess, setShowSuccess]           = useState(false);
+
+  const [expandedScanId, setExpandedScanId] = useState<string | null>(null);
+  const [scanDetail, setScanDetail]         = useState<ScanDetail | null>(null);
+  const [detailLoading, setDetailLoading]   = useState(false);
 
   const [accounts, setAccounts]             = useState<{account_name: string}[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<string>('Default');
@@ -405,6 +420,26 @@ export default function Dashboard() {
           });
         }
       }
+    }
+  };
+
+  const toggleScanDetail = async (scanId: string) => {
+    if (expandedScanId === scanId) {
+      setExpandedScanId(null);
+      setScanDetail(null);
+      return;
+    }
+    setExpandedScanId(scanId);
+    setScanDetail(null);
+    setDetailLoading(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API}/api/metrics/history/${scanId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) setScanDetail(await res.json());
+    } finally {
+      setDetailLoading(false);
     }
   };
 
@@ -811,7 +846,6 @@ export default function Dashboard() {
                     <span>{lastScan.id}</span>
                     <span>{new Date(lastScan.start_time).toLocaleString()}</span>
                     <span>{lastScan.findings_count ?? 0} findings · {lastScan.remediations_count ?? 0} fixed</span>
-                    {lastScan.estimated_cost ? <span>${lastScan.estimated_cost.toFixed(4)}</span> : <span>—</span>}
                   </div>
                 )}
               </div>
@@ -954,46 +988,136 @@ export default function Dashboard() {
               ))}
             </div>
 
-            {/* History table */}
+            {/* History list */}
             {scanHistory.length > 0 ? (
-              <div className="bg-[#111116] border border-white/8 rounded-xl overflow-hidden shadow-sm">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-white/8 bg-[#09090b]">
-                      <th className="text-left px-5 py-3 text-xs font-medium text-slate-600">Scan ID</th>
-                      <th className="text-left px-5 py-3 text-xs font-medium text-slate-600">Time</th>
-                      <th className="text-right px-5 py-3 text-xs font-medium text-slate-600">Findings</th>
-                      <th className="text-right px-5 py-3 text-xs font-medium text-slate-600">Fixed</th>
-                      <th className="text-right px-5 py-3 text-xs font-medium text-slate-600">Cost</th>
-                      <th className="text-right px-5 py-3 text-xs font-medium text-slate-600">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/8">
-                    {scanHistory.map(scan => (
-                      <tr key={scan.id} className="hover:bg-[#0d0d10] transition-colors">
-                        <td className="px-5 py-3 font-mono text-xs text-slate-400">{scan.id}</td>
-                        <td className="px-5 py-3 text-xs text-slate-500">{new Date(scan.start_time).toLocaleString()}</td>
-                        <td className="px-5 py-3 text-right text-xs text-slate-400">{scan.findings_count ?? 0}</td>
-                        <td className="px-5 py-3 text-right text-xs text-violet-400 font-medium">
-                          {Math.min(scan.remediations_count ?? 0, scan.findings_count ?? 0)}
-                        </td>
-                        <td className="px-5 py-3 text-right text-xs text-slate-500 font-mono">
-                          {scan.estimated_cost != null ? `$${scan.estimated_cost.toFixed(4)}` : '—'}
-                        </td>
-                        <td className="px-5 py-3 text-right">
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${
-                            scan.verified               ? 'bg-violet-500/10 text-violet-400 border-violet-700/40' :
-                            scan.status === 'COMPLETED' ? 'bg-blue-500/10 text-blue-400 border-blue-700/40'         :
-                            scan.status === 'ABORTED'   ? 'bg-slate-800 text-slate-400 border-slate-700'            :
-                            'bg-red-500/10 text-red-400 border-red-700/40'
-                          }`}>
-                            {scan.verified ? '✓ Verified' : scan.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="space-y-2">
+                {scanHistory.map(scan => {
+                  const isExpanded = expandedScanId === scan.id;
+                  const isLoading  = isExpanded && detailLoading;
+                  const detail     = isExpanded && !detailLoading ? scanDetail : null;
+
+                  // Parse findings from audit_summary (🔴 lines)
+                  const findingLines = detail?.audit_summary
+                    ? detail.audit_summary.split('\n').filter(l => l.includes('🔴') || l.includes('⚠️'))
+                    : [];
+
+                  const TOOL_LABEL: Record<string, string> = {
+                    restrict_iam_user:             'Revoke Admin Privileges',
+                    remediate_s3:                  'Block Public S3 Access',
+                    remediate_vpc_flow_logs:        'Enable VPC Flow Logs',
+                    revoke_security_group_ingress:  'Close Open Ports',
+                    enforce_imdsv2:                 'Enforce IMDSv2',
+                    stop_instance:                  'Quarantine EC2 Instance',
+                    remediate_rds_public_access:    'Make RDS Private',
+                    remediate_lambda_role:          'Fix Lambda Permissions',
+                    remediate_cloudtrail:            'Enable CloudTrail',
+                  };
+
+                  return (
+                    <div key={scan.id} className="bg-[#111116] border border-white/8 rounded-xl overflow-hidden">
+                      {/* Row */}
+                      <button
+                        onClick={() => toggleScanDetail(scan.id)}
+                        className="w-full flex items-center gap-4 px-5 py-4 hover:bg-white/2 transition-colors text-left"
+                      >
+                        <ChevronRight size={14} className={`text-slate-600 shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                        <div className="flex-1 min-w-0 grid grid-cols-5 gap-4 items-center">
+                          <div className="col-span-2">
+                            <p className="text-xs text-slate-400">{new Date(scan.start_time).toLocaleString()}</p>
+                            <p className="text-xs text-slate-600 font-mono mt-0.5">{scan.id}</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-sm font-semibold text-slate-200">{scan.findings_count ?? 0}</p>
+                            <p className="text-xs text-slate-600">findings</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-sm font-semibold text-violet-400">{Math.min(scan.remediations_count ?? 0, scan.findings_count ?? 0)}</p>
+                            <p className="text-xs text-slate-600">fixed</p>
+                          </div>
+                          <div className="text-right">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${
+                              scan.verified               ? 'bg-violet-500/10 text-violet-400 border-violet-700/40' :
+                              scan.status === 'SECURE'    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40' :
+                              scan.status === 'COMPLETED' ? 'bg-blue-500/10 text-blue-400 border-blue-700/40'      :
+                              scan.status === 'ABORTED'   ? 'bg-slate-800 text-slate-400 border-slate-700'         :
+                              'bg-red-500/10 text-red-400 border-red-700/40'
+                            }`}>
+                              {scan.verified ? '✓ Verified' : scan.status === 'SECURE' ? '✓ Secure' : scan.status}
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+
+                      {/* Expanded detail */}
+                      {isExpanded && (
+                        <div className="border-t border-white/6 bg-[#0d0d10] px-5 py-4 space-y-5">
+                          {isLoading ? (
+                            <p className="text-xs text-slate-600 py-4 text-center">Loading scan details…</p>
+                          ) : detail ? (
+                            <>
+                              {/* Meta row */}
+                              {detail.end_time && (
+                                <div className="flex items-center gap-6 text-xs text-slate-500">
+                                  <span>Duration: <span className="text-slate-300">{
+                                    Math.round((new Date(detail.end_time).getTime() - new Date(detail.start_time).getTime()) / 1000)
+                                  }s</span></span>
+                                </div>
+                              )}
+
+                              {/* Findings */}
+                              {findingLines.length > 0 && (
+                                <div>
+                                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Findings</p>
+                                  <div className="space-y-1">
+                                    {findingLines.map((line, i) => {
+                                      const isCritical = line.includes('CRITICAL') || line.includes('🔴');
+                                      const resourceMatch = line.match(/\] (.+?) is vulnerable/);
+                                      const resource = resourceMatch?.[1] ?? line.replace(/^[🔴⚠️\s\[\w\]]+/, '').trim();
+                                      const actionMatch = line.match(/call `?(\w+)`?/);
+                                      const action = actionMatch ? (TOOL_LABEL[actionMatch[1]] ?? actionMatch[1]) : '';
+                                      return (
+                                        <div key={i} className="flex items-start gap-2.5 text-xs py-1.5">
+                                          {isCritical
+                                            ? <XCircle size={12} className="text-red-400 shrink-0 mt-0.5" />
+                                            : <AlertTriangle size={12} className="text-amber-400 shrink-0 mt-0.5" />}
+                                          <span className="text-slate-300 font-mono">{resource}</span>
+                                          {action && <span className="text-slate-600">→ {action}</span>}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Remediations */}
+                              {detail.remediations.length > 0 && (
+                                <div>
+                                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Remediations</p>
+                                  <div className="space-y-1">
+                                    {detail.remediations.map((r, i) => (
+                                      <div key={i} className="flex items-center gap-2.5 text-xs py-1">
+                                        {r.status === 'SUCCESS'
+                                          ? <CheckCircle size={12} className="text-violet-400 shrink-0" />
+                                          : <XCircle size={12} className="text-red-400 shrink-0" />}
+                                        <span className="text-slate-300 font-mono">{r.resource_name}</span>
+                                        <span className="text-slate-600">{TOOL_LABEL[r.action] ?? r.action}</span>
+                                        <span className="ml-auto text-slate-700">{r.duration.toFixed(1)}s</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {detail.remediations.length === 0 && findingLines.length === 0 && (
+                                <p className="text-xs text-slate-600 text-center py-2">No detailed data stored for this scan.</p>
+                              )}
+                            </>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <div className="bg-[#111116] border border-white/8 rounded-xl p-10 flex flex-col items-center text-center">

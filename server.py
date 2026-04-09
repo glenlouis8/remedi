@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from mcp_server.database import (
     reset_to_vulnerable, get_all_status, init_db,
-    get_scan_history, get_remediation_breakdown, get_connection,
+    get_scan_history, get_remediation_breakdown, get_scan_detail, get_connection,
     purge_expired_credentials,
 )
 from remedi_platform.auth import get_current_user
@@ -297,6 +297,14 @@ def get_metrics(user: dict = Depends(get_current_user)):
 @app.get("/api/metrics/history")
 def get_history(user: dict = Depends(get_current_user)):
     return get_scan_history(user_id=user["sub"])
+
+
+@app.get("/api/metrics/history/{scan_id}")
+def get_scan_detail_endpoint(scan_id: str, user: dict = Depends(get_current_user)):
+    detail = get_scan_detail(scan_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    return detail
 
 
 @app.get("/api/metrics/breakdown")

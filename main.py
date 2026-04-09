@@ -79,8 +79,8 @@ def run_interactive_session():
         print("=======================================================")
         # TELEMETRY: Finalize scan even if system is already secure
         end_time = datetime.datetime.now().isoformat()
-        update_scan(scan_id, 
-                    status="COMPLETED", 
+        update_scan(scan_id,
+                    status="SECURE",
                     end_time=end_time,
                     total_tokens=snapshot.values.get("total_tokens", 0))
         

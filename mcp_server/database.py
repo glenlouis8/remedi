@@ -133,6 +133,7 @@ def init_db():
     # Add new columns if they don't exist (safe to run multiple times)
     c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS gate_time TIMESTAMP")
     c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT FALSE")
+    c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS audit_summary TEXT")
 
     c.execute('''
         CREATE TABLE IF NOT EXISTS remediation_logs (
@@ -259,7 +260,7 @@ def get_scan_history(user_id: str | None = None):
             cur.execute("""
                 SELECT id, start_time, end_time, findings_count, remediations_count, status, verified
                 FROM scans
-                WHERE status IN ('COMPLETED', 'ABORTED') AND user_id = %s
+                WHERE status IN ('COMPLETED', 'ABORTED', 'SECURE') AND user_id = %s
                 ORDER BY start_time DESC
                 LIMIT 10
             """, (user_id,))
@@ -267,7 +268,7 @@ def get_scan_history(user_id: str | None = None):
             cur.execute("""
                 SELECT id, start_time, end_time, findings_count, remediations_count, status, verified
                 FROM scans
-                WHERE status IN ('COMPLETED', 'ABORTED')
+                WHERE status IN ('COMPLETED', 'ABORTED', 'SECURE')
                 ORDER BY start_time DESC
                 LIMIT 10
             """)
@@ -306,3 +307,25 @@ def get_remediation_breakdown():
         totals[cat] = totals.get(cat, 0) + row["count"]
 
     return [{"category": k, "count": v} for k, v in totals.items()]
+
+
+def get_scan_detail(scan_id: str):
+    """Returns the full detail for one scan: audit summary + remediation log entries."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT id, start_time, end_time, findings_count, remediations_count,
+                   status, verified, estimated_cost, total_tokens, audit_summary
+            FROM scans WHERE id = %s
+        """, (scan_id,))
+        scan = dict(cur.fetchone() or {})
+
+        cur.execute("""
+            SELECT resource_name, action, status, duration, timestamp
+            FROM remediation_logs WHERE scan_id = %s ORDER BY timestamp ASC
+        """, (scan_id,))
+        scan["remediations"] = [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+    return scan
