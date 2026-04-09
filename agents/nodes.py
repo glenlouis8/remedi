@@ -2,16 +2,35 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 import json
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 from agents.state import AgentState
 from agents.mcp_client import get_all_tools, get_tools_by_name
-from mcp_server.database import start_scan, update_scan, log_remediation
+from mcp_server.database import start_scan, update_scan, log_remediation, update_status
 import datetime
 
 load_dotenv()
+
+
+def _get_protected_clause(for_report=False):
+    protected_raw = os.environ.get("PROTECTED_IAM_USERS", "").strip()
+    protected_users = [u.strip() for u in protected_raw.split(",") if u.strip()] if protected_raw else []
+    if not protected_users:
+        return ""
+    if for_report:
+        return (
+            f"\n\nIMPORTANT: The following IAM users/roles are protected by the account owner and must NOT appear in the remediation plan under any circumstances:\n"
+            + "\n".join(f"  - {u}" for u in protected_users)
+        )
+    return (
+        "\n\nPROTECTED: The following IAM users are marked as admin accounts by the account owner. "
+        "Skip them entirely — do not flag or report on them:\n"
+        + "\n".join(f"  - {u}" for u in protected_users)
+    )
+
 
 llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0)
 
@@ -99,6 +118,13 @@ def _run_sub_agent(service: str, prompt: str, tools: list, protected_clause: str
     return service, text, total_tokens
 
 
+_OUTPUT_FORMAT = (
+    "\n\nOutput each finding on its own line in exactly this format:\n"
+    "FINDING: <resource name> | SEVERITY: <CRITICAL|HIGH|MEDIUM> | REASON: <one sentence why>\n"
+    "If a tool returns an error, output: ERROR: <service> scan failed — <reason>\n"
+    "If nothing is wrong, output exactly: <service>: No issues found."
+)
+
 _SPECIALIST_CONFIGS = [
     {
         "service": "IAM",
@@ -107,8 +133,8 @@ _SPECIALIST_CONFIGS = [
             "You are an IAM security specialist. Audit this AWS account's IAM configuration.\n"
             "1. Call `list_iam_users` to get all users.\n"
             "2. Call `list_attached_user_policies` for EVERY user found.\n"
-            "3. Flag any user with AdministratorAccess or PowerUserAccess as CRITICAL.\n"
-            "Return a concise findings summary. If nothing is wrong, say 'IAM: No issues found.'"
+            "3. Flag any user with AdministratorAccess or PowerUserAccess as CRITICAL."
+            + _OUTPUT_FORMAT
         ),
     },
     {
@@ -118,8 +144,8 @@ _SPECIALIST_CONFIGS = [
             "You are an S3 security specialist. Audit this AWS account's S3 buckets.\n"
             "1. Call `list_s3_buckets` to get all buckets.\n"
             "2. Call `check_s3_security` for each bucket.\n"
-            "3. Flag any publicly accessible bucket as CRITICAL.\n"
-            "Return a concise findings summary. If nothing is wrong, say 'S3: No issues found.'"
+            "3. Flag any publicly accessible bucket as CRITICAL."
+            + _OUTPUT_FORMAT
         ),
     },
     {
@@ -128,8 +154,8 @@ _SPECIALIST_CONFIGS = [
         "prompt": (
             "You are a VPC network security specialist. Audit this AWS account's VPC configuration.\n"
             "1. Call `audit_vpc_network`.\n"
-            "2. Flag any VPC with flow logs disabled as HIGH severity.\n"
-            "Return a concise findings summary. If nothing is wrong, say 'VPC: No issues found.'"
+            "2. Flag any VPC with flow logs disabled as HIGH severity."
+            + _OUTPUT_FORMAT
         ),
     },
     {
@@ -138,8 +164,8 @@ _SPECIALIST_CONFIGS = [
         "prompt": (
             "You are a network security specialist. Audit this AWS account's security groups.\n"
             "1. Call `audit_security_groups`.\n"
-            "2. Flag any group allowing 0.0.0.0/0 inbound access as HIGH severity.\n"
-            "Return a concise findings summary. If nothing is wrong, say 'Security Groups: No issues found.'"
+            "2. Flag any group allowing 0.0.0.0/0 inbound on any port as HIGH severity."
+            + _OUTPUT_FORMAT
         ),
     },
     {
@@ -148,8 +174,9 @@ _SPECIALIST_CONFIGS = [
         "prompt": (
             "You are an EC2 security specialist. Audit this AWS account's EC2 instances.\n"
             "1. Call `audit_ec2_vulnerabilities`.\n"
-            "2. Flag instances with IMDSv1 enabled or unencrypted root volumes.\n"
-            "Return a concise findings summary. If nothing is wrong, say 'EC2: No issues found.'"
+            "2. Flag instances with IMDSv1 enabled as HIGH (metadata credential theft risk).\n"
+            "3. Flag instances with unencrypted root volumes as HIGH (data exposure risk)."
+            + _OUTPUT_FORMAT
         ),
     },
     {
@@ -158,8 +185,8 @@ _SPECIALIST_CONFIGS = [
         "prompt": (
             "You are an RDS security specialist. Audit this AWS account's RDS databases.\n"
             "1. Call `audit_rds_instances`.\n"
-            "2. Flag any publicly accessible database as CRITICAL.\n"
-            "Return a concise findings summary. If nothing is wrong, say 'RDS: No issues found.'"
+            "2. Flag any publicly accessible database as CRITICAL (direct internet exposure)."
+            + _OUTPUT_FORMAT
         ),
     },
     {
@@ -168,8 +195,8 @@ _SPECIALIST_CONFIGS = [
         "prompt": (
             "You are a Lambda security specialist. Audit this AWS account's Lambda functions.\n"
             "1. Call `audit_lambda_permissions`.\n"
-            "2. Flag any function with an over-permissioned execution role.\n"
-            "Return a concise findings summary. If nothing is wrong, say 'Lambda: No issues found.'"
+            "2. Flag any function whose execution role has AdministratorAccess or wildcard Action (*) as HIGH."
+            + _OUTPUT_FORMAT
         ),
     },
     {
@@ -178,8 +205,9 @@ _SPECIALIST_CONFIGS = [
         "prompt": (
             "You are a CloudTrail security specialist. Audit this AWS account's logging configuration.\n"
             "1. Call `audit_cloudtrail_logging`.\n"
-            "2. Flag if logging is disabled or no trails exist.\n"
-            "Return a concise findings summary. If nothing is wrong, say 'CloudTrail: No issues found.'"
+            "2. Flag if no trails exist as CRITICAL (no audit log means no breach detection).\n"
+            "3. Flag if logging is disabled on an existing trail as HIGH."
+            + _OUTPUT_FORMAT
         ),
     },
 ]
@@ -193,17 +221,10 @@ def orchestrator_node(state: AgentState):
     """
     print("--- [NODE] ORCHESTRATOR (parallel scan) ---")
 
-    protected_raw = os.environ.get("PROTECTED_IAM_USERS", "").strip()
-    protected_users = [u.strip() for u in protected_raw.split(",") if u.strip()] if protected_raw else []
-    protected_clause = (
-        "\n\nPROTECTED: The following IAM users are marked as admin accounts by the account owner. "
-        "Skip them entirely — do not flag or report on them:\n"
-        + "\n".join(f"  - {u}" for u in protected_users)
-        if protected_users else ""
-    )
-
+    protected_clause = _get_protected_clause()
     scan_id = state.get("scan_id", "UNKNOWN")
-    start_scan(scan_id)
+    user_id = os.environ.get("REMEDI_USER_ID")
+    start_scan(scan_id, user_id=user_id)
 
     tasks = [
         (
@@ -232,10 +253,28 @@ def orchestrator_node(state: AgentState):
                 findings[svc] = text
                 total_tokens += tokens
                 svc_key = _SVC_KEY.get(svc, svc.lower())
-                has_issues = any(kw in text.upper() for kw in ["CRITICAL", "VULNERABLE", "VIOLATION", "EXPOSED", "PUBLIC", "WARNING", "RISK"])
-                status = "vulnerable" if has_issues else "ok"
-                first_line = next((l.strip() for l in text.split("\n") if l.strip() and len(l.strip()) > 10), "Scan complete")
-                print(f"[SCAN] {json.dumps({'service': svc_key, 'resource': svc, 'status': status, 'msg': first_line[:120]})}", flush=True)
+
+                # Parse FINDING lines to emit one [SCAN] event per actual resource
+                finding_pattern = re.compile(
+                    r'FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+)',
+                    re.IGNORECASE
+                )
+                parsed_findings = finding_pattern.findall(text)
+
+                if parsed_findings:
+                    seen_resources = set()
+                    for resource_name, severity, reason in parsed_findings:
+                        resource_name = resource_name.strip()
+                        if resource_name in seen_resources:
+                            continue
+                        seen_resources.add(resource_name)
+                        print(f"[SCAN] {json.dumps({'service': svc_key, 'resource': resource_name, 'status': 'vulnerable', 'msg': reason.strip()[:120]})}", flush=True)
+                else:
+                    # No findings — emit one clean event for the service
+                    has_issues = any(kw in text.upper() for kw in ["CRITICAL", "HIGH", "VULNERABLE", "VIOLATION", "EXPOSED", "PUBLIC"])
+                    status = "vulnerable" if has_issues else "ok"
+                    first_line = next((l.strip() for l in text.split("\n") if l.strip() and len(l.strip()) > 10), "No issues found")
+                    print(f"[SCAN] {json.dumps({'service': svc_key, 'resource': svc, 'status': status, 'msg': first_line[:120]})}", flush=True)
             except Exception as e:
                 findings[service] = f"{service}: scan failed — {e}"
                 svc_key = _SVC_KEY.get(service, service.lower())
@@ -264,13 +303,7 @@ def report_generator_node(state: AgentState):
     # summary — all the intermediate tool call/result pairs before it are noise here.
     last_auditor_msg = messages[-1] if messages else HumanMessage(content="No audit data.")
 
-    protected_raw = os.environ.get("PROTECTED_IAM_USERS", "").strip()
-    protected_users = [u.strip() for u in protected_raw.split(",") if u.strip()] if protected_raw else []
-    protected_clause = (
-        f"\n\nIMPORTANT: The following IAM users/roles are protected by the account owner and must NOT appear in the remediation plan under any circumstances:\n"
-        + "\n".join(f"  - {u}" for u in protected_users)
-        if protected_users else ""
-    )
+    protected_clause = _get_protected_clause(for_report=True)
 
     summary_prompt = HumanMessage(
         content=(
@@ -289,6 +322,8 @@ def report_generator_node(state: AgentState):
             "- CloudTrail logging disabled → `remediate_cloudtrail`\n\n"
             "Output one line per finding in exactly this format:\n"
             "🔴 [CRITICAL] <resource name> is vulnerable -> ACTION: I will call `<tool name>`.\n\n"
+            "If a finding has no matching tool above, output:\n"
+            "⚠️ [MANUAL] <resource name> requires manual review — <reason>.\n\n"
             "Do not invent findings. Only include resources that were actually flagged in the audit."
             + protected_clause
         )
@@ -307,16 +342,34 @@ def report_generator_node(state: AgentState):
         ).strip()
     else:
         clean_content = str(response.content)
-    # Count unique tool calls in the plan (not 🔴 symbols — the same tool can be
-    # mentioned multiple times for the same resource e.g. restrict_iam_user for
-    # both the policy violation and insider threat finding on the same user)
-    import re
-    tool_calls_in_plan = re.findall(r'I will call `?(\w+)`?', clean_content)
-    findings_count = len(set(tool_calls_in_plan)) if tool_calls_in_plan else clean_content.count("🔴")
+    # Count total findings — one per 🔴 line in the plan
+    findings_count = len(re.findall(r'I will call `?\w+`?', clean_content)) or clean_content.count("🔴")
 
     # Single update call instead of two
     update_scan(scan_id, findings_count=findings_count, total_tokens=state.get("total_tokens", 0) + tokens)
 
+    # Update CIS compliance checks based on scan findings
+    _SERVICE_TO_CIS = {
+        "IAM":             "check_iam",
+        "S3":              "check_s3",
+        "VPC":             "check_vpc",
+        "Security Groups": "check_ssh",
+        "EC2":             "check_ec2",
+        "RDS":             "check_rds",
+        "Lambda":          "check_lambda",
+        "CloudTrail":      "check_cloudtrail",
+    }
+    audit_combined = str(last_auditor_msg.content) if hasattr(last_auditor_msg, "content") else ""
+    for svc, check_id in _SERVICE_TO_CIS.items():
+        section_start = audit_combined.find(f"=== {svc} ===")
+        if section_start == -1:
+            continue
+        section_end = audit_combined.find("===", section_start + len(f"=== {svc} ==="))
+        section = audit_combined[section_start:section_end if section_end != -1 else None].upper()
+        has_issues = any(kw in section for kw in ["CRITICAL", "HIGH", "FINDING:", "VULNERABLE", "EXPOSED", "PUBLIC"])
+        update_status(check_id, "VULNERABLE" if has_issues else "SAFE")
+
+    print("[CIS_READY]", flush=True)
     print(f"[DEBUG] Generated Report: {clean_content}")
     return {"audit_summary": clean_content, "messages": [response], "total_tokens": tokens, "findings_count": findings_count}
 
@@ -414,6 +467,8 @@ def remediator_agent(state: AgentState):
         pattern = re.compile(
             r'🔴 \[CRITICAL\] (.+?) is vulnerable -> ACTION: I will call [`\'"]?(\w+)[`\'"]?'
         )
+        approved_resources = state.get("approved_resources")  # None = all approved
+
         tasks = []
         for match in pattern.finditer(summary):
             resource  = match.group(1).strip()
@@ -421,6 +476,9 @@ def remediator_agent(state: AgentState):
             real_name = INTENT_MAP.get(tool_name, tool_name)
             func      = FUNCTION_DISPATCH.get(real_name)
             arg_key   = TOOL_ARG_MAP.get(real_name)
+            if approved_resources is not None and resource not in approved_resources:
+                print(f"[SKIP] {resource} not in approved list — skipping.")
+                continue
             tasks.append((resource, real_name, func, {arg_key: resource} if arg_key else {}))
 
         print(f"[DEBUG] Parsed {len(tasks)} tasks. Starting parallel execution...")
@@ -445,7 +503,7 @@ def remediator_agent(state: AgentState):
         results = []
         success_count = 0
 
-        with ThreadPoolExecutor(max_workers=max(len(tasks), 1)) as executor:
+        with ThreadPoolExecutor(max_workers=min(max(len(tasks), 1), 10)) as executor:
             futures = [executor.submit(_run_task, *t) for t in tasks]
             for future in as_completed(futures):
                 resource, real_name, args, message, status, duration = future.result()
@@ -486,8 +544,17 @@ def verifier_agent(state: AgentState):
             "2. Re-run audit tools ONLY for those specific resources — do NOT scan anything else.\n"
             "   Only use resource names and IDs that appear in the remediation report.\n"
             "   Never invent or guess resource names.\n"
-            "3. If a fixed resource is still vulnerable, report 'VERIFICATION FAILURE' with details.\n"
-            "4. If every fixed resource is now clean, respond with exactly:\n"
+            "3. Use these criteria to determine if a resource is now clean:\n"
+            "   - IAM user: no AdministratorAccess or PowerUserAccess policies attached\n"
+            "   - S3 bucket: all four public access block flags are True\n"
+            "   - VPC: flow logs enabled and in ACTIVE state\n"
+            "   - Security group: no inbound rules with 0.0.0.0/0\n"
+            "   - EC2 instance: HttpTokens is 'required' (IMDSv2 enforced)\n"
+            "   - RDS instance: PubliclyAccessible is False\n"
+            "   - Lambda function: execution role has no wildcard Action (*) policies\n"
+            "   - CloudTrail: at least one trail exists with IsLogging True\n"
+            "4. If a fixed resource is still vulnerable, report 'VERIFICATION FAILURE' with details.\n"
+            "5. If every fixed resource is now clean, respond with exactly:\n"
             "'🏆 MISSION ACCOMPLISHED. All resources verified as SECURE.'"
         )
     )
@@ -518,17 +585,55 @@ def verifier_agent(state: AgentState):
     verified = "MISSION ACCOMPLISHED" in str(response.content)
     status = "COMPLETED" if verified else "FAILED"
     end_time = datetime.datetime.now().isoformat()
-    
-    # Cost estimate: blended Haiku ($0.80/1M) + Sonnet ($3/1M) tokens
+
+    # Cost estimate: Gemini Flash (~$0.15/1M input, $0.60/1M output)
     # Using $0.0000015 per token as a conservative blended rate
     total_tokens_so_far = state.get("total_tokens", 0) + tokens
     cost = total_tokens_so_far * 0.0000015
-    
+
     update_scan(scan_id,
                 total_tokens=total_tokens_so_far,
                 status=status,
                 end_time=end_time,
                 estimated_cost=cost,
                 verified=verified)
+
+    # Update compliance checks — mark remediated services as SAFE now that fixes are verified
+    if verified:
+        _TOOL_TO_CIS = {
+            "restrict_iam_user":             "check_iam",
+            "remediate_s3":                  "check_s3",
+            "remediate_vpc_flow_logs":        "check_vpc",
+            "revoke_security_group_ingress":  "check_ssh",
+            "enforce_imdsv2":                 "check_ec2",
+            "stop_instance":                  "check_ec2",
+            "remediate_rds_public_access":    "check_rds",
+            "remediate_lambda_role":          "check_lambda",
+            "remediate_cloudtrail":           "check_cloudtrail",
+        }
+        _INTENT_TO_TOOL = {
+            "enable_vpc_flow_logs":          "remediate_vpc_flow_logs",
+            "remediate_security_group":      "revoke_security_group_ingress",
+            "stop_ec2_instance":             "stop_instance",
+            "remediate_ec2_vulnerabilities": "stop_instance",
+            "set_s3_bucket_private":         "remediate_s3",
+            "remediate_s3_bucket":           "remediate_s3",
+            "remediate_s3_public_access":    "remediate_s3",
+            "disable_rds_public_access":     "remediate_rds_public_access",
+            "remediate_rds":                 "remediate_rds_public_access",
+            "fix_lambda_permissions":        "remediate_lambda_role",
+            "remediate_lambda":              "remediate_lambda_role",
+            "enable_cloudtrail":             "remediate_cloudtrail",
+            "fix_cloudtrail":               "remediate_cloudtrail",
+        }
+        summary = state.get("audit_summary", "")
+        call_pattern = re.compile(r'I will call [`\'"]?(\w+)[`\'"]?')
+        updated = set()
+        for m in call_pattern.finditer(summary):
+            tool_name = _INTENT_TO_TOOL.get(m.group(1), m.group(1))
+            check_id = _TOOL_TO_CIS.get(tool_name)
+            if check_id and check_id not in updated:
+                update_status(check_id, "SAFE")
+                updated.add(check_id)
 
     return {"messages": [response], "total_tokens": tokens}
