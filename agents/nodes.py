@@ -42,7 +42,7 @@ _tools_by_name = get_tools_by_name()
 
 AUDIT_TOOL_NAMES = {
     "get_agent_identity", "list_iam_users", "list_attached_user_policies",
-    "list_s3_buckets", "check_s3_security", "audit_vpc_network",
+    "list_s3_buckets", "check_s3_security", "audit_s3_buckets", "audit_vpc_network",
     "audit_security_groups", "audit_ec2_vulnerabilities", "get_resource_owner",
     "audit_rds_instances", "audit_lambda_permissions", "audit_cloudtrail_logging",
 }
@@ -139,12 +139,11 @@ _SPECIALIST_CONFIGS = [
     },
     {
         "service": "S3",
-        "tool_names": {"list_s3_buckets", "check_s3_security"},
+        "tool_names": {"audit_s3_buckets"},
         "prompt": (
             "You are an S3 security specialist. Audit this AWS account's S3 buckets.\n"
-            "1. Call `list_s3_buckets` to get all buckets.\n"
-            "2. Call `check_s3_security` for each bucket.\n"
-            "3. Flag any publicly accessible bucket as CRITICAL."
+            "1. Call `audit_s3_buckets` — this lists all buckets and checks each one in a single call.\n"
+            "2. Flag any bucket reported as PUBLIC RISK as CRITICAL."
             + _OUTPUT_FORMAT
         ),
     },

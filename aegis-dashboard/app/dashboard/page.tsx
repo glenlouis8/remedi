@@ -203,6 +203,7 @@ export default function Dashboard() {
   const [remediationPlan, setRemediationPlan]   = useState<{ toolName: string; resource: string }[]>([]);
   const [remediationSteps, setRemediationSteps] = useState<RemediationStep[]>([]);
   const [approvedItems, setApprovedItems]       = useState<Set<string>>(new Set());
+  const [resourceReasons, setResourceReasons]   = useState<Record<string, string>>({});
   const [showSuccess, setShowSuccess]           = useState(false);
 
   const [expandedScanId, setExpandedScanId] = useState<string | null>(null);
@@ -301,15 +302,16 @@ export default function Dashboard() {
     setActiveService(null);
     setRemediationPlan([]);
     setRemediationSteps([]);
+    setResourceReasons({});
 
     const controller = new AbortController();
     abortRef.current = controller;
     let wasAborted = false;
     let hadVulns   = false;
     const tracker: { resource: string; status: 'running' | 'success' | 'error' }[] = [];
-    // Local accumulator for scan items — avoids React batching causing old state
-    // to leak into new scans when using the functional updater (prev => ...).
+    // Local accumulators — avoids React batching causing old state to leak into new scans.
     const localItems: Partial<Record<ServiceKey, ScanItem[]>> = {};
+    const localReasons: Record<string, string> = {};
 
     try {
       const token = await getToken();
@@ -343,6 +345,9 @@ export default function Dashboard() {
                   localItems[svc]!.push({ resource: event.resource, status: event.status, msg: event.msg ?? '' });
                   setScanItems({ ...localItems });
                 }
+                if (event.status === 'vulnerable' && event.msg) {
+                  localReasons[event.resource] = event.msg;
+                }
               }
             } catch { /* malformed */ }
             continue;
@@ -351,11 +356,9 @@ export default function Dashboard() {
           if (raw.includes('[ACTION_REQUIRED] WAITING_FOR_APPROVAL')) {
             setActiveService(null);
             setScanState('awaiting_approval');
-            // Default: all findings approved
-            setRemediationPlan(prev => {
-              setApprovedItems(new Set(prev.map(p => p.resource)));
-              return prev;
-            });
+            // Flush reasons; start with nothing approved — user must explicitly approve
+            setResourceReasons({ ...localReasons });
+            setApprovedItems(new Set());
           }
 
           if (raw.includes('[CRITICAL]') || raw.includes('[POLICY VIOLATION]') || raw.includes('[HIGH]')) {
@@ -810,11 +813,12 @@ export default function Dashboard() {
                 {/* Per-finding cards */}
                 <div className="space-y-2">
                   {remediationPlan.map((item, i) => {
-                    const info      = REMEDIATION_INFO[item.toolName];
+                    const info       = REMEDIATION_INFO[item.toolName];
                     const isApproved = approvedItems.has(item.resource);
+                    const whyText    = resourceReasons[item.resource] || info?.risk || 'Vulnerability detected';
                     return (
                       <div key={i} className={`rounded-xl border transition-all duration-200 overflow-hidden ${
-                        isApproved ? 'border-violet-700/40 bg-[#111116]' : 'border-white/6 bg-[#0d0d10] opacity-50'
+                        isApproved ? 'border-violet-700/40 bg-violet-950/10' : 'border-white/8 bg-[#111116]'
                       }`}>
                         <div className="flex items-start gap-4 px-5 py-4">
                           {/* Icon */}
@@ -832,10 +836,7 @@ export default function Dashboard() {
                                 {item.resource}
                               </span>
                             </div>
-                            <p className="text-xs text-slate-500 mt-1 leading-relaxed">{info?.risk ?? 'Vulnerability detected'}</p>
-                            <p className="text-xs text-slate-700 mt-1">
-                              Fix: <span className="text-slate-500 font-mono">{item.toolName}</span>
-                            </p>
+                            <p className="text-xs text-slate-400 mt-1 leading-relaxed">{whyText}</p>
                           </div>
 
                           {/* Toggle */}
@@ -852,7 +853,7 @@ export default function Dashboard() {
                                 : 'bg-white/4 border-white/8 text-slate-500 hover:bg-violet-500/10 hover:border-violet-500/20 hover:text-violet-400'
                             }`}
                           >
-                            {isApproved ? 'Approved' : 'Skipped'}
+                            {isApproved ? 'Approved ✓' : 'Approve'}
                           </button>
                         </div>
                       </div>

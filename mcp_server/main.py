@@ -186,6 +186,44 @@ def check_s3_security(bucket_name: str) -> dict:
 
 
 @mcp.tool()
+def audit_s3_buckets() -> str:
+    """Lists all S3 buckets and checks each one for public access in a single call."""
+    s3 = get_boto_client("s3")
+    try:
+        response = s3.list_buckets()
+        buckets = [b["Name"] for b in response.get("Buckets", [])]
+        if not buckets:
+            return "No S3 buckets found."
+
+        results = []
+        for bucket_name in buckets:
+            try:
+                res = s3.get_public_access_block(Bucket=bucket_name)
+                c = res["PublicAccessBlockConfiguration"]
+                is_public = not all([
+                    c["BlockPublicAcls"],
+                    c["IgnorePublicAcls"],
+                    c["BlockPublicPolicy"],
+                    c["RestrictPublicBuckets"],
+                ])
+                if is_public:
+                    _emit("s3", bucket_name, "vulnerable", "public access block not fully configured")
+                    results.append(f"BUCKET {bucket_name}: PUBLIC RISK — public access block incomplete")
+                else:
+                    _emit("s3", bucket_name, "ok")
+                    results.append(f"BUCKET {bucket_name}: SECURE")
+            except ClientError:
+                _emit("s3", bucket_name, "vulnerable", "no public access block configured")
+                results.append(f"BUCKET {bucket_name}: PUBLIC RISK — no public access block found")
+            except Exception as e:
+                results.append(f"BUCKET {bucket_name}: ERROR — {e}")
+
+        return "\n".join(results)
+    except Exception as e:
+        return f"Error auditing S3 buckets: {str(e)}"
+
+
+@mcp.tool()
 def remediate_s3(bucket_name: str) -> str:
     """
     REMEDIATION: Blocks ALL public access.
