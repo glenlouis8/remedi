@@ -792,7 +792,7 @@ export default function Dashboard() {
                         {remediationPlan.length} {remediationPlan.length === 1 ? 'vulnerability' : 'vulnerabilities'} detected
                       </p>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        {approvedItems.size} of {remediationPlan.length} selected for remediation
+                        {approvedItems.size} of {remediationPlan.length} approved for remediation
                       </p>
                     </div>
                   </div>
@@ -801,6 +801,19 @@ export default function Dashboard() {
                       className="text-xs text-slate-500 hover:text-slate-300 border border-white/8 hover:border-white/15 px-3 py-2 rounded-lg transition-colors">
                       Cancel
                     </button>
+                    {approvedItems.size < remediationPlan.length ? (
+                      <button
+                        onClick={() => setApprovedItems(new Set(remediationPlan.map(p => p.resource)))}
+                        className="text-xs text-slate-400 hover:text-violet-300 border border-white/8 hover:border-violet-500/30 hover:bg-violet-500/5 px-3 py-2 rounded-lg transition-colors">
+                        Approve all
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setApprovedItems(new Set())}
+                        className="text-xs text-slate-400 hover:text-red-400 border border-white/8 hover:border-red-700/30 px-3 py-2 rounded-lg transition-colors">
+                        Clear all
+                      </button>
+                    )}
                     <button
                       onClick={handleApprove}
                       disabled={approvedItems.size === 0}
