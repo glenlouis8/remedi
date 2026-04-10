@@ -371,12 +371,18 @@ def get_breakdown(user: dict = Depends(get_current_user)):
     return get_remediation_breakdown()
 
 
+MAX_CONCURRENT_SCANS = 3
+
 @app.post("/api/run-agent")
 def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     user_id = user["sub"]
     creds = get_aws_credentials(user_id, body.account_name)
     if not creds:
         raise HTTPException(status_code=400, detail="No AWS account connected. Please complete onboarding first.")
+
+    active = sum(1 for m in _managers.values() if m.is_running)
+    if active >= MAX_CONCURRENT_SCANS:
+        raise HTTPException(status_code=503, detail="Server is busy with other scans. Try again in a few minutes.")
 
     used = count_scans_today(user_id, body.account_name or "Default")
     if used >= 3:

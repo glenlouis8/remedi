@@ -309,10 +309,12 @@ export default function Dashboard() {
       });
 
       if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
         if (res.status === 429) {
-          const data = await res.json().catch(() => ({}));
           setScanError(data.detail ?? 'Scan limit reached. Try again tomorrow.');
           setScansRemaining(0);
+        } else if (res.status === 503) {
+          setScanError(data.detail ?? 'Server is busy. Try again in a few minutes.');
         }
         setScanState('idle');
         return;
