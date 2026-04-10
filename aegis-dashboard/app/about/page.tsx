@@ -128,7 +128,7 @@ export default function AboutPage() {
                     step: '02',
                     title: 'Structured report',
                     body: 'A report generator synthesises all findings into a structured remediation plan. Every finding maps to a specific tool call. The report uses a strict machine-readable format so the remediator can parse it without an additional LLM call.',
-                    tag: 'Gemini 2.0 Flash',
+                    tag: 'Gemini 3.0 Flash',
                   },
                   {
                     step: '03',
@@ -307,7 +307,7 @@ export default function AboutPage() {
                   },
                   {
                     Icon: Zap,
-                    label: 'Gemini 2.0 Flash',
+                    label: 'Gemini 3.0 Flash',
                     detail: 'Powers all LLM calls — audit analysis, report synthesis, and verification. Flash provides the latency profile required for real-time streaming without sacrificing reasoning quality.',
                   },
                   {
