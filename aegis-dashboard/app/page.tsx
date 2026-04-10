@@ -249,7 +249,7 @@ export default function HomePage() {
             <ShieldCheck size={13} className="text-violet-500/50" />
             <span>Remedi</span>
           </div>
-          <span>© {new Date().getFullYear()} — AWS credentials encrypted at rest, deleted on sign out</span>
+          <span>© {new Date().getFullYear()} — AWS credentials encrypted at rest, deleted on sign out, auto-expire after 30 min of inactivity</span>
           <Link href="/about" className="hover:text-slate-400 transition-colors">About</Link>
           <Link href="/developer" className="hover:text-slate-400 transition-colors">Developer</Link>
         </footer>
