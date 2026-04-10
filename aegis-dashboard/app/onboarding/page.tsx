@@ -79,31 +79,57 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#09090b] text-white flex flex-col items-center justify-center px-6 py-16" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+    <div className="min-h-screen bg-[#09090b] text-white flex flex-col" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');`}</style>
 
-      <div className="relative z-10 flex items-center justify-between w-full max-w-md mb-10">
-        <Link href="/dashboard" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+      {/* Top nav */}
+      <header className="shrink-0 border-b border-white/6 px-8 h-14 flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
           <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.25)' }}>
             <ShieldCheck size={15} className="text-violet-400" />
           </div>
           <span className="font-semibold tracking-tight text-white">Remedi</span>
         </Link>
         <Link href="/dashboard" className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors">
-          <ArrowLeft size={13} /> Back
+          <ArrowLeft size={13} /> Back to dashboard
         </Link>
-      </div>
+      </header>
 
-      <div className="relative z-10 w-full max-w-md space-y-6">
+      {/* Two-column layout */}
+      <div className="flex-1 grid grid-cols-2 max-w-5xl mx-auto w-full px-8 py-16 gap-16">
 
-        <div>
-          <h1 className="text-2xl font-bold text-white mb-1">Connect your AWS account</h1>
-          <p className="text-sm text-slate-500">Creates a least-privilege IAM user — takes about 2 minutes.</p>
+        {/* Left: context */}
+        <div className="flex flex-col justify-center">
+          <h1 className="text-3xl font-bold text-white mb-3 leading-snug">Connect your AWS account</h1>
+          <p className="text-slate-400 mb-8 leading-relaxed">
+            Remedi creates a dedicated IAM user with least-privilege permissions — only what it needs to scan and fix your account, nothing more.
+          </p>
+          <div className="space-y-4">
+            {[
+              { icon: '🔑', title: 'Least-privilege access', desc: 'No AdministratorAccess. A custom policy scoped to only the actions Remedi needs.' },
+              { icon: '🗑️', title: 'Revoke anytime', desc: 'Delete the CloudFormation stack to immediately remove all credentials and access.' },
+              { icon: '🔒', title: 'Encrypted at rest', desc: 'Credentials are AES-256 encrypted in the database and deleted when you sign out.' },
+            ].map(({ icon, title, desc }) => (
+              <div key={title} className="flex gap-3">
+                <span className="text-lg mt-0.5">{icon}</span>
+                <div>
+                  <p className="text-sm font-medium text-slate-200">{title}</p>
+                  <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
+
+        {/* Right: steps */}
+        <div className="flex flex-col justify-center space-y-4">
 
         {/* Step 1: CloudFormation */}
         <div className="rounded-xl border border-white/8 p-4 space-y-3" style={{ background: 'rgba(14,14,18,0.8)' }}>
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Step 1 — Create IAM credentials</p>
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Step 1 — Create IAM credentials</p>
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.2)' }}>Recommended</span>
+          </div>
           <a
             href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https://remedi-cloudformation-templates.s3.amazonaws.com/remedi-agent.yaml&stackName=remedi-agent"
             target="_blank"
@@ -239,7 +265,8 @@ export default function OnboardingPage() {
           <p>Credentials are encrypted at rest and deleted on sign-out. Delete the IAM user anytime to revoke all access.</p>
         </div>
 
-      </div>
+        </div>{/* end right column */}
+      </div>{/* end grid */}
     </div>
   );
 }
