@@ -143,16 +143,21 @@ export default function OnboardingPage() {
             <ExternalLink size={14} />
           </a>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Opens CloudFormation in your AWS account. Copy the <strong className="text-slate-400">Access Key ID</strong> and <strong className="text-slate-400">Secret Access Key</strong> from the <strong className="text-slate-400">Outputs</strong> tab when the stack finishes.
+            Deploys a CloudFormation stack that creates a dedicated IAM user (<code className="text-slate-400 px-1 rounded" style={{ background: 'rgba(255,255,255,0.05)' }}>remedi-agent</code>) with a scoped policy — read access across 8 services plus write access only for the specific remediation actions Remedi needs. No AdministratorAccess, no wildcards. Copy the <strong className="text-slate-400">Access Key ID</strong> and <strong className="text-slate-400">Secret Access Key</strong> from the <strong className="text-slate-400">Outputs</strong> tab when the stack finishes.
           </p>
-          <a
-            href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks?filteringText=remedi-agent"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-violet-500 hover:text-violet-400 transition-colors"
-          >
-            Already set up? View your stack <ExternalLink size={10} />
-          </a>
+          <div className="flex items-center justify-between">
+            <a
+              href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks?filteringText=remedi-agent"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-violet-500 hover:text-violet-400 transition-colors"
+            >
+              Already set up? View your stack <ExternalLink size={10} />
+            </a>
+            <Link href="/setup-details" className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors">
+              What does this create? <ExternalLink size={10} />
+            </Link>
+          </div>
         </div>
 
         {/* Step 2: Enter credentials */}
