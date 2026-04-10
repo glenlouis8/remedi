@@ -5,10 +5,10 @@ import { useAuth, useClerk, useUser } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-  ShieldCheck, ShieldAlert, Play, Square, CheckCircle, XCircle,
+  ShieldCheck, Play, Square, CheckCircle, XCircle,
   AlertTriangle, Users, HardDrive, Globe, Shield,
   Server, Database, Zap, FileText, Lock, ChevronDown, ChevronRight,
-  LayoutDashboard, History, LogOut, Clock,
+  LayoutDashboard, History, LogOut, Clock, Trash2,
   Activity, TrendingUp,
 } from 'lucide-react';
 
@@ -28,6 +28,7 @@ interface SecurityMetrics {
 }
 interface ScanHistoryItem {
   id: string;
+  account_name: string;
   start_time: string;
   findings_count: number;
   remediations_count: number;
@@ -86,52 +87,6 @@ const parseRemediationItem = (line: string) => {
   for (const p of patterns) { const m = line.match(p); if (m) { resource = m[1].trim(); break; } }
   return { toolName, resource: resource || toolName };
 };
-
-// ─── CIS Score Gauge ──────────────────────────────────────────────────────────
-
-function ScoreGauge({ score, total, percentage, large = false }: {
-  score: number; total: number; percentage: number; large?: boolean
-}) {
-  const color = percentage >= 80 ? '#8b5cf6' : percentage >= 50 ? '#f59e0b' : '#ef4444';
-  const label = percentage >= 80 ? 'Compliant' : percentage >= 50 ? 'Needs attention' : 'At risk';
-
-  if (large) {
-    const r = 60; const circ = 2 * Math.PI * r; const arcLen = circ * 0.75;
-    const filled = (percentage / 100) * arcLen;
-    return (
-      <div className="flex flex-col items-center">
-        <svg viewBox="0 0 160 160" className="w-52 h-52">
-          <circle cx="80" cy="80" r={r} fill="none" stroke="#222228" strokeWidth="10"
-            strokeDasharray={`${arcLen} ${circ}`} strokeLinecap="round" transform="rotate(135 80 80)" />
-          <circle cx="80" cy="80" r={r} fill="none" stroke={color} strokeWidth="10"
-            strokeDasharray={`${filled} ${circ}`} strokeLinecap="round" transform="rotate(135 80 80)"
-            style={{ transition: 'stroke-dasharray 1s ease' }} />
-          <text x="80" y="74" textAnchor="middle" fontSize="36" fontWeight="700" fill="#e2e8f0" fontFamily="JetBrains Mono, monospace">{percentage}%</text>
-          <text x="80" y="95" textAnchor="middle" fontSize="12" fill="#475569">{score} / {total} controls</text>
-        </svg>
-        <span className="text-sm font-semibold -mt-5" style={{ color }}>{label}</span>
-      </div>
-    );
-  }
-
-  const r = 36; const circ = 2 * Math.PI * r; const arcLen = circ * 0.75;
-  const filled = (percentage / 100) * arcLen;
-  return (
-    <div className="flex flex-col items-center justify-center">
-      <svg viewBox="0 0 100 100" className="w-32 h-32">
-        <circle cx="50" cy="50" r={r} fill="none" stroke="#222228" strokeWidth="10"
-          strokeDasharray={`${arcLen} ${circ}`} strokeLinecap="round" transform="rotate(135 50 50)" />
-        <circle cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth="10"
-          strokeDasharray={`${filled} ${circ}`} strokeLinecap="round" transform="rotate(135 50 50)"
-          style={{ transition: 'stroke-dasharray 0.8s ease' }} />
-        <text x="50" y="47" textAnchor="middle" fontSize="22" fontWeight="700" fill="#e2e8f0">{score}</text>
-        <text x="50" y="61" textAnchor="middle" fontSize="11" fill="#475569">/ {total}</text>
-      </svg>
-      <span className="text-xs font-semibold -mt-2" style={{ color }}>{label}</span>
-      <p className="text-xs text-slate-500 mt-1">CIS Score</p>
-    </div>
-  );
-}
 
 // ─── Service Card ─────────────────────────────────────────────────────────────
 
@@ -215,9 +170,21 @@ export default function Dashboard() {
   const [iamUsers, setIamUsers]             = useState<string[]>([]);
   const [credentialUser, setCredentialUser] = useState<string | null>(null);
   const [protectedUsers, setProtectedUsers] = useState<string[]>([]);
-  const [view, setView]                     = useState<'overview' | 'compliance' | 'history'>('overview');
+  const [view, setView]                     = useState<'overview' | 'history' | 'settings'>('overview');
+  const [confirmDelete, setConfirmDelete]   = useState(false);
+  const [scansRemaining, setScansRemaining] = useState<number | null>(null);
+  const [scanError, setScanError]           = useState<string | null>(null);
   const [dropdownOpen, setDropdownOpen]     = useState(false);
+  const [iamPickerOpen, setIamPickerOpen]   = useState(false);
+  const [iamLoading, setIamLoading]         = useState(false);
+  const [feedbackRating, setFeedbackRating]     = useState(0);
+  const [feedbackHover, setFeedbackHover]       = useState(0);
+  const [feedbackMessage, setFeedbackMessage]   = useState('');
+  const [feedbackScanId, setFeedbackScanId]     = useState<string | null>(null);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+  const [showDisclaimer, setShowDisclaimer]     = useState(false);
   const dropdownRef                         = useRef<HTMLDivElement>(null);
+  const iamPickerRef                        = useRef<HTMLDivElement>(null);
   const abortRef                            = useRef<AbortController | null>(null);
 
   // Redirect to onboarding if no AWS credentials are connected
@@ -238,6 +205,7 @@ export default function Dashboard() {
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setDropdownOpen(false);
+      if (iamPickerRef.current && !iamPickerRef.current.contains(e.target as Node)) setIamPickerOpen(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -247,12 +215,24 @@ export default function Dashboard() {
     const h = async () => ({ Authorization: `Bearer ${await getToken()}` });
 
     const fetchIamUsers = async (acct: string) => {
+      setIamLoading(true);
       try {
         const res = await fetch(`${API}/api/iam/users?account_name=${encodeURIComponent(acct)}`, { headers: await h() });
         if (res.ok) {
           const data = await res.json();
           setIamUsers(data.users ?? []);
           setCredentialUser(data.credential_user ?? null);
+        }
+      } catch { /* ignore */ }
+      finally { setIamLoading(false); }
+    };
+
+    const fetchScansRemaining = async (acct: string) => {
+      try {
+        const res = await fetch(`${API}/api/scans/remaining?account_name=${encodeURIComponent(acct)}`, { headers: await h() });
+        if (res.ok) {
+          const data = await res.json();
+          setScansRemaining(data.remaining ?? null);
         }
       } catch { /* ignore */ }
     };
@@ -273,7 +253,7 @@ export default function Dashboard() {
     };
 
     fetchAccounts().then(() => {
-      setSelectedAccount(prev => { fetchIamUsers(prev); return prev; });
+      setSelectedAccount(prev => { fetchIamUsers(prev); fetchScansRemaining(prev); return prev; });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
 
@@ -298,7 +278,13 @@ export default function Dashboard() {
 
   const startScan = async () => {
     setScanState('scanning');
+    setScanError(null);
     setScanItems({});
+    setFeedbackRating(0);
+    setFeedbackHover(0);
+    setFeedbackMessage('');
+    setFeedbackScanId(null);
+    setFeedbackSubmitted(false);
     setActiveService(null);
     setRemediationPlan([]);
     setRemediationSteps([]);
@@ -322,7 +308,15 @@ export default function Dashboard() {
         body: JSON.stringify({ account_name: selectedAccount, protected_users: protectedUsers }),
       });
 
-      if (!res.ok || !res.body) { setScanState('idle'); return; }
+      if (!res.ok || !res.body) {
+        if (res.status === 429) {
+          const data = await res.json().catch(() => ({}));
+          setScanError(data.detail ?? 'Scan limit reached. Try again tomorrow.');
+          setScansRemaining(0);
+        }
+        setScanState('idle');
+        return;
+      }
 
       const reader  = res.body.getReader();
       const decoder = new TextDecoder();
@@ -413,6 +407,12 @@ export default function Dashboard() {
         setScanState('idle');
       } else {
         setScanState('complete');
+        // Refresh remaining scans count
+        getToken().then(tok =>
+          fetch(`${API}/api/scans/remaining?account_name=${encodeURIComponent(selectedAccount)}`, {
+            headers: { Authorization: `Bearer ${tok}` },
+          }).then(r => r.ok ? r.json() : null).then(d => { if (d) setScansRemaining(d.remaining); }).catch(() => {})
+        );
         if (!hadVulns) {
           setShowSuccess(true);
           setTimeout(() => setShowSuccess(false), 4500);
@@ -560,6 +560,77 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* ── Pre-scan disclaimer modal ───────────────────────────────────────── */}
+      {showDisclaimer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#09090b]/80 backdrop-blur-sm px-4">
+          <div className="bg-[#111116] border border-white/10 rounded-2xl shadow-2xl shadow-black/60 w-full max-w-lg overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-5 border-b border-white/6">
+              <div className="flex items-center gap-2 mb-1">
+                <AlertTriangle size={15} className="text-amber-400 shrink-0" />
+                <h2 className="text-sm font-semibold text-white">Before you scan</h2>
+                <span className="ml-auto text-xs bg-amber-500/10 border border-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full">Beta</span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Remedi will make the following changes to your AWS account if vulnerabilities are found and you approve them. Review carefully.
+              </p>
+            </div>
+
+            {/* Changes list */}
+            <div className="px-6 py-4 space-y-3 max-h-72 overflow-y-auto">
+              {[
+                { icon: '🔑', service: 'IAM', change: 'Overprivileged users will have all policies detached and ReadOnlyAccess applied.' },
+                { icon: '🪣', service: 'S3', change: 'Publicly accessible buckets will have all four public access block settings enabled.' },
+                { icon: '🌐', service: 'VPC', change: 'An IAM role (AegisFlowLogRole) and CloudWatch log group will be created. Both persist in your account permanently — they\'re required for flow logs to keep working.' },
+                { icon: '🔒', service: 'Security Groups', change: 'Inbound rules allowing 0.0.0.0/0 on any port will be revoked. All other rules are left intact.' },
+                { icon: '💻', service: 'EC2', change: 'IMDSv2 will be enforced on vulnerable instances. Instances with unencrypted root volumes will be stopped — running workloads will be interrupted.' },
+                { icon: '🗄️', service: 'RDS', change: 'Publicly accessible databases will be set to private. No data is touched.' },
+                { icon: '⚡', service: 'Lambda', change: 'Over-permissioned execution role policies will be detached.' },
+                { icon: '📋', service: 'CloudTrail', change: 'A trail (remedi-audit-trail) and an S3 bucket for log delivery will be created. Both persist in your account and the S3 bucket will accumulate log data over time.' },
+              ].map(({ icon, service, change }) => (
+                <div key={service} className="flex gap-3">
+                  <span className="text-sm shrink-0 mt-0.5">{icon}</span>
+                  <div>
+                    <p className="text-xs font-medium text-slate-300">{service}</p>
+                    <p className="text-xs text-slate-500 leading-relaxed mt-0.5">{change}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Region + beta notices */}
+            <div className="mx-6 mb-1 flex items-start gap-2 bg-white/3 border border-white/8 rounded-lg px-4 py-3">
+              <Globe size={12} className="text-slate-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-slate-500 leading-relaxed">
+                <strong className="text-slate-400">Single-region scan.</strong> Only resources in the region configured with your AWS credentials are visible. Resources in other regions will not be found or remediated.
+              </p>
+            </div>
+            <div className="mx-6 mb-4 mt-3 flex items-start gap-2 bg-amber-500/5 border border-amber-500/15 rounded-lg px-4 py-3">
+              <AlertTriangle size={12} className="text-amber-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-500/80 leading-relaxed">
+                Remedi is in <strong className="text-amber-400">beta</strong>. Only scan accounts you control and understand. Always review each finding before approving a fix. Use a dedicated IAM user with least-privilege access.
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="px-6 pb-5 flex items-center gap-3 justify-end">
+              <button
+                onClick={() => setShowDisclaimer(false)}
+                className="text-xs text-slate-500 hover:text-slate-300 px-4 py-2 rounded-lg hover:bg-white/5 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { setShowDisclaimer(false); startScan(); }}
+                className="flex items-center gap-2 text-xs font-semibold bg-violet-500 hover:bg-violet-400 text-white px-4 py-2 rounded-lg transition-colors"
+              >
+                <Play size={11} className="fill-current" /> I understand, run scan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Top nav ─────────────────────────────────────────────────────────── */}
       <header className="shrink-0 border-b border-white/6" style={{ background: '#09090b' }}>
         <div className="flex items-center justify-between px-6 h-14 gap-4">
@@ -570,14 +641,15 @@ export default function Dashboard() {
               <ShieldCheck size={15} className="text-violet-400" />
             </div>
             <span className="font-semibold tracking-tight text-white">Remedi</span>
+            <span className="text-xs font-medium px-1.5 py-0.5 rounded-full border" style={{ color: '#f59e0b', borderColor: 'rgba(245,158,11,0.25)', background: 'rgba(245,158,11,0.08)', fontFamily: "'JetBrains Mono', monospace" }}>beta</span>
           </Link>
 
           {/* Tab nav */}
           <nav className="flex items-center gap-1">
             {([
-              { key: 'overview',   label: 'Overview',   Icon: LayoutDashboard },
-              { key: 'compliance', label: 'Compliance', Icon: Shield          },
-              { key: 'history',    label: 'History',    Icon: History         },
+              { key: 'overview',  label: 'Overview',  Icon: LayoutDashboard },
+              { key: 'history',   label: 'History',   Icon: History         },
+              { key: 'settings',  label: 'Settings',  Icon: Lock            },
             ] as const).map(({ key, label, Icon }) => (
               <button key={key} onClick={() => setView(key)}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
@@ -600,12 +672,16 @@ export default function Dashboard() {
                 key={a.account_name}
                 onClick={() => {
                   setSelectedAccount(a.account_name);
+                  setIamLoading(true);
                   getToken().then(token => {
                     fetch(`${API}/api/iam/users?account_name=${encodeURIComponent(a.account_name)}`, {
                       headers: { Authorization: `Bearer ${token}` },
                     }).then(r => r.ok ? r.json() : null).then(data => {
                       if (data) { setIamUsers(data.users ?? []); setCredentialUser(data.credential_user ?? null); }
-                    }).catch(() => {});
+                    }).catch(() => {}).finally(() => setIamLoading(false));
+                    fetch(`${API}/api/scans/remaining?account_name=${encodeURIComponent(a.account_name)}`, {
+                      headers: { Authorization: `Bearer ${token}` },
+                    }).then(r => r.ok ? r.json() : null).then(d => { if (d) setScansRemaining(d.remaining); }).catch(() => {});
                   });
                 }}
                 disabled={scanState === 'scanning' || scanState === 'remediating'}
@@ -619,8 +695,8 @@ export default function Dashboard() {
               </button>
             ))}
             {accounts.length < 3 && (
-              <Link href="/onboarding" className="text-xs text-slate-600 hover:text-slate-400 px-2 py-1.5 transition-colors">
-                + Add
+              <Link href="/onboarding" className="flex items-center gap-1 text-xs font-medium border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 px-3 py-1.5 rounded-lg transition-colors">
+                + Add account
               </Link>
             )}
 
@@ -628,12 +704,15 @@ export default function Dashboard() {
             <div className="relative ml-1" ref={dropdownRef}>
               <button
                 onClick={() => setDropdownOpen(v => !v)}
-                className="w-8 h-8 rounded-full bg-violet-500/15 border border-violet-500/25 flex items-center justify-center hover:bg-violet-500/25 transition-colors"
+                className="flex items-center gap-1.5 pl-1 pr-2 py-1 rounded-lg border border-white/8 hover:border-white/15 hover:bg-white/4 transition-colors"
               >
-                <span className="text-xs font-semibold text-violet-400">{userInitial}</span>
+                <div className="w-6 h-6 rounded-full bg-violet-500/15 border border-violet-500/25 flex items-center justify-center">
+                  <span className="text-xs font-semibold text-violet-400">{userInitial}</span>
+                </div>
+                <ChevronRight size={11} className={`text-slate-600 transition-transform ${dropdownOpen ? 'rotate-90' : 'rotate-0'}`} />
               </button>
               {dropdownOpen && (
-                <div className="absolute right-0 top-full mt-2 w-52 bg-[#111116] border border-white/8 rounded-xl shadow-2xl shadow-black/50 z-20 overflow-hidden">
+                <div className="absolute right-0 top-full mt-2 w-56 bg-[#111116] border border-white/8 rounded-xl shadow-2xl shadow-black/50 z-20 overflow-hidden">
                   <div className="px-4 py-3 border-b border-white/6">
                     <p className="text-xs font-medium text-slate-200 truncate">{user?.firstName ?? 'User'}</p>
                     <p className="text-xs text-slate-600 truncate">{user?.emailAddresses?.[0]?.emailAddress ?? ''}</p>
@@ -644,16 +723,33 @@ export default function Dashboard() {
                       <p className="text-xs font-mono text-slate-400 truncate">{credentialUser}</p>
                     </div>
                   )}
-                  <button
-                    onClick={async () => {
-                      const token = await getToken();
-                      await fetch(`${API}/api/accounts`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }).catch(console.error);
-                      signOut({ redirectUrl: '/' });
-                    }}
-                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-slate-500 hover:text-slate-200 hover:bg-white/5 transition-colors text-left"
-                  >
-                    <LogOut size={12} /> Sign out
-                  </button>
+                  {selectedAccount && (
+                    <button
+                      onClick={() => { setDropdownOpen(false); handleDeleteAccount(selectedAccount); }}
+                      disabled={scanState === 'scanning' || scanState === 'remediating'}
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-slate-500 hover:text-red-400 hover:bg-red-500/5 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 size={12} /> Disconnect <span className="font-medium text-slate-400">{selectedAccount}</span>
+                    </button>
+                  )}
+                  <div className="border-t border-white/6">
+                    <a
+                      href="mailto:glen.louis08@gmail.com"
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-slate-500 hover:text-slate-200 hover:bg-white/5 transition-colors"
+                    >
+                      <span>✉</span> Contact developer
+                    </a>
+                    <button
+                      onClick={async () => {
+                        const token = await getToken();
+                        await fetch(`${API}/api/accounts`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }).catch(console.error);
+                        signOut({ redirectUrl: '/' });
+                      }}
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-slate-500 hover:text-slate-200 hover:bg-white/5 transition-colors text-left"
+                    >
+                      <LogOut size={12} /> Sign out
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -668,41 +764,141 @@ export default function Dashboard() {
           {/* ── Overview ──────────────────────────────────────────────────────── */}
           {view === 'overview' && (<>
 
-            {/* ── IDLE: hero card ── */}
+            {/* ── IDLE ── */}
             {scanState === 'idle' && (
-              <div className="rounded-2xl border border-white/8 bg-[#111116] overflow-hidden">
-                <div className="flex flex-col items-center text-center px-8 pt-12 pb-10">
-                  {cisScore ? (
-                    <ScoreGauge large score={cisScore.score} total={cisScore.total} percentage={cisScore.percentage} />
-                  ) : (
-                    <div className="w-52 h-52 flex items-center justify-center">
-                      <div className="w-36 h-36 rounded-full border-8 border-white/6 flex items-center justify-center animate-pulse">
-                        <span className="text-slate-700 text-xs">Loading…</span>
-                      </div>
+              <div className="space-y-4">
+
+                {/* Action bar */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-sm font-semibold text-slate-100">Security Overview</h2>
+                    {lastScan ? (
+                      <p className="text-xs text-slate-600 mt-0.5 font-mono">
+                        Last scan {new Date(lastScan.start_time).toLocaleString()} · {lastScan.findings_count ?? 0} findings · {lastScan.remediations_count ?? 0} fixed
+                      </p>
+                    ) : (
+                      <p className="text-xs text-slate-600 mt-0.5">No scans run yet</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {/* Protect users button */}
+                    <div className="relative" ref={iamPickerRef}>
+                      <button
+                        onClick={() => setIamPickerOpen(v => !v)}
+                        className="flex items-center gap-1.5 text-xs border border-white/8 hover:border-white/15 hover:bg-white/4 text-slate-400 px-3 py-2 rounded-lg transition-colors"
+                      >
+                        <Lock size={12} />
+                        Protect users
+                        {protectedUsers.length > 0 && (
+                          <span className="ml-0.5 bg-violet-500/20 text-violet-400 text-xs px-1.5 py-0.5 rounded-full font-medium">{protectedUsers.length}</span>
+                        )}
+                      </button>
+                      {iamPickerOpen && (
+                        <div className="absolute right-0 top-full mt-1 w-64 bg-[#111116] border border-white/8 rounded-xl shadow-2xl shadow-black/50 z-20 overflow-hidden">
+                          <div className="px-4 py-2.5 border-b border-white/6">
+                            <p className="text-xs font-medium text-slate-400">Protected IAM users</p>
+                            <p className="text-xs text-slate-600 mt-0.5">These users won't be touched during remediation.</p>
+                          </div>
+                          {credentialUser && (
+                            <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/4 bg-white/2">
+                              <Lock size={11} className="text-slate-600 shrink-0" />
+                              <span className="text-xs font-mono text-slate-500 flex-1 truncate">{credentialUser}</span>
+                              <span className="text-xs text-slate-700">auto</span>
+                            </div>
+                          )}
+                          <div className="max-h-52 overflow-y-auto">
+                            {iamLoading ? (
+                              <p className="text-xs text-slate-600 px-4 py-3 animate-pulse">Loading IAM users…</p>
+                            ) : iamUsers.filter(u => u !== credentialUser).length === 0 ? (
+                              <p className="text-xs text-slate-600 px-4 py-3">No other IAM users found in this account.</p>
+                            ) : (
+                              iamUsers.filter(u => u !== credentialUser).map(u => {
+                                const checked = protectedUsers.includes(u);
+                                return (
+                                  <label key={u} className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/3 cursor-pointer transition-colors">
+                                    <input type="checkbox" checked={checked}
+                                      onChange={() => setProtectedUsers(prev => checked ? prev.filter(x => x !== u) : [...prev, u])}
+                                      className="accent-violet-500" />
+                                    <span className="text-xs font-mono text-slate-300 truncate">{u}</span>
+                                  </label>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  )}
-                  <button onClick={startScan}
-                    className="mt-6 flex items-center gap-2.5 bg-violet-500 hover:bg-violet-400 text-white font-semibold px-8 py-3 rounded-xl transition-colors text-sm shadow-lg shadow-violet-900/20">
-                    <Play size={14} className="fill-current" /> Run security scan
-                  </button>
-                  {credentialUser && (
-                    <p className="text-xs text-slate-600 mt-3">
-                      Scanning <span className="font-mono text-slate-500">{credentialUser}</span>
-                    </p>
-                  )}
+
+                    {/* Scan limit + Run scan */}
+                    <div className="flex flex-col items-end gap-1">
+                      <button
+                        onClick={() => setShowDisclaimer(true)}
+                        disabled={scansRemaining === 0}
+                        className="flex items-center gap-2 bg-violet-500 hover:bg-violet-400 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold px-4 py-2 rounded-lg transition-colors text-sm"
+                      >
+                        <Play size={12} className="fill-current" />
+                        {scansRemaining === 0 ? 'Limit reached' : 'Run scan'}
+                      </button>
+                      {scansRemaining !== null && (
+                        <p className="text-xs text-slate-600 text-right">
+                          {scansRemaining === 0
+                            ? 'Limit reached · resets at midnight'
+                            : `${scansRemaining} of 3 remaining today`}
+                        </p>
+                      )}
+                      <p className="text-xs text-slate-700">Scans are compute-intensive · 3/account/day</p>
+                    </div>
+                  </div>
                 </div>
-                <div className="grid grid-cols-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-                  {[
-                    { label: 'Total scans',  value: String(metrics?.total_scans ?? '—') },
-                    { label: 'Success rate', value: metrics?.success_rate ?? '—'         },
-                    { label: 'Avg fix time', value: metrics?.avg_mttr ?? '—'             },
-                    { label: 'Open vulns',   value: openVulns                            },
-                  ].map(({ label, value }, idx) => (
-                    <div key={label} className="px-6 py-4 text-center" style={{ borderLeft: idx > 0 ? '1px solid rgba(255,255,255,0.06)' : 'none' }}>
-                      <p className="text-xl font-bold text-slate-100" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{value}</p>
-                      <p className="text-xs text-slate-600 mt-0.5">{label}</p>
+
+                {/* Scan error banner */}
+                {scanError && (
+                  <div className="flex items-center gap-2 text-xs text-red-400 bg-red-500/8 border border-red-500/20 rounded-lg px-4 py-2.5">
+                    <AlertTriangle size={13} className="shrink-0" />
+                    {scanError}
+                  </div>
+                )}
+
+                {/* Main grid */}
+                <div>
+
+                  {/* Environment table */}
+                  <div className="rounded-xl border border-white/8 bg-[#111116] overflow-hidden">
+                    <div className="px-4 py-3 border-b border-white/6 flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-medium text-slate-400">Environment</p>
+                        <p className="text-xs text-slate-700 mt-0.5">Single-region only · resources in other regions are not scanned</p>
+                      </div>
+                      <p className="text-xs text-slate-600">
+                        {scanHistory.length === 0 ? 'No scan data yet' : `${checks.filter(c => c.status === 'VULNERABLE').length} issues · ${checks.filter(c => c.status === 'SAFE').length} passing`}
+                      </p>
                     </div>
-                  ))}
+                    <div className="divide-y divide-white/4">
+                      {SERVICE_ORDER.map(svc => {
+                        const { label, Icon } = SERVICE_META[svc];
+                        const checkId = `check_${svc === 'sg' ? 'ssh' : svc}`;
+                        const check = checks.find(c => c.id === checkId);
+                        const isVuln = check?.status === 'VULNERABLE';
+                        const isSafe = check?.status === 'SAFE';
+                        return (
+                          <div key={svc} className={`flex items-center gap-3 px-4 py-3 transition-colors ${isVuln && scanHistory.length > 0 ? 'bg-red-950/10' : ''}`}>
+                            <Icon size={13} className={isVuln && scanHistory.length > 0 ? 'text-red-400' : 'text-slate-700'} />
+                            <span className={`text-sm flex-1 ${isVuln && scanHistory.length > 0 ? 'text-slate-200' : 'text-slate-600'}`}>{label}</span>
+                            <p className="text-xs text-slate-600 flex-1 truncate">{scanHistory.length > 0 ? (check?.description ?? '') : ''}</p>
+                            {isVuln && scanHistory.length > 0 && (
+                              <span className="flex items-center gap-1.5 text-xs font-medium text-red-400">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" /> Vulnerable
+                              </span>
+                            )}
+                            {scanHistory.length === 0 && (
+                              <span className="text-xs text-slate-700">—</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                 </div>
               </div>
             )}
@@ -919,170 +1115,153 @@ export default function Dashboard() {
             {/* ── COMPLETE ── */}
             {scanState === 'complete' && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between px-6 py-4 rounded-2xl border border-violet-700/30 bg-violet-950/20">
-                  <div className="flex items-center gap-4">
-                    <div className="w-9 h-9 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-                      <CheckCircle size={16} className="text-violet-400" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-slate-100">Scan complete</p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        {fixedCount > 0 ? `${fixedCount} ${fixedCount === 1 ? 'fix' : 'fixes'} applied and verified` : 'No vulnerabilities found'}
-                      </p>
-                    </div>
-                  </div>
-                  <button onClick={startScan}
-                    className="flex items-center gap-2 text-sm bg-violet-500 hover:bg-violet-400 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
-                    <Play size={11} className="fill-current" /> Scan again
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {SERVICE_ORDER.map(svc => (
-                    <ServiceCard key={svc} svc={svc} items={scanItems[svc] ?? []} isActive={false} scanState={scanState} />
-                  ))}
-                </div>
-                {lastScan && (
-                  <div className="flex items-center justify-between px-5 py-3 rounded-xl border border-white/6 text-xs text-slate-600" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-                    <span>{lastScan.id}</span>
-                    <span>{new Date(lastScan.start_time).toLocaleString()}</span>
-                    <span>{lastScan.findings_count ?? 0} findings · {lastScan.remediations_count ?? 0} fixed</span>
-                  </div>
-                )}
-              </div>
-            )}
 
-            {/* ── Protected users: compact pill row ── */}
-            {(scanState === 'idle' || scanState === 'complete') && iamUsers.length > 0 && (
-              <div className="flex items-center justify-between px-5 py-3.5 rounded-xl border border-white/6">
-                <div className="flex items-center gap-3">
-                  <Lock size={13} className="text-slate-600 shrink-0" />
+                {/* Action bar */}
+                <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-xs font-medium text-slate-400">Protected IAM users</p>
-                    <p className="text-xs text-slate-600 mt-0.5">
-                      {credentialUser && <><span className="font-mono">{credentialUser}</span> always protected · </>}
-                      {protectedUsers.length > 0 ? `${protectedUsers.length} additional selected` : 'none additional'}
-                    </p>
+                    <h2 className="text-sm font-semibold text-slate-100">Security Overview</h2>
+                    {lastScan && (
+                      <p className="text-xs text-slate-600 mt-0.5 font-mono">
+                        {lastScan.id} · {new Date(lastScan.start_time).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border ${
+                      fixedCount > 0
+                        ? 'text-violet-400 border-violet-700/40 bg-violet-950/20'
+                        : 'text-emerald-400 border-emerald-700/40 bg-emerald-950/20'
+                    }`}>
+                      <CheckCircle size={11} />
+                      {fixedCount > 0 ? `${fixedCount} ${fixedCount === 1 ? 'fix' : 'fixes'} applied` : 'No vulnerabilities found'}
+                    </span>
+                    <button onClick={startScan}
+                      className="flex items-center gap-2 bg-violet-500 hover:bg-violet-400 text-white font-semibold px-4 py-2 rounded-lg transition-colors text-sm">
+                      <Play size={12} className="fill-current" /> Scan again
+                    </button>
                   </div>
                 </div>
-                <div className="relative shrink-0" ref={dropdownRef}>
-                  <button onClick={() => setDropdownOpen(v => !v)}
-                    className="flex items-center gap-2 text-xs border border-white/8 bg-[#09090b] hover:bg-white/4 rounded-lg px-3 py-2 transition-colors">
-                    <span className="text-slate-400">
-                      {protectedUsers.length === 0 ? 'Add users…' : `${protectedUsers.length} selected`}
-                    </span>
-                    <ChevronDown size={12} className={`text-slate-500 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
-                  </button>
-                  {dropdownOpen && (
-                    <div className="absolute right-0 top-full mt-1 w-60 bg-[#111116] border border-white/8 rounded-xl shadow-2xl shadow-black/50 z-10 overflow-hidden">
-                      {credentialUser && (
-                        <div className="flex items-center gap-3 px-4 py-2.5 bg-[#09090b] border-b border-white/6">
-                          <Lock size={11} className="text-slate-600 shrink-0" />
-                          <span className="text-xs font-mono text-slate-500 flex-1 truncate">{credentialUser}</span>
-                          <span className="text-xs text-slate-700">auto</span>
+
+                {/* Results table */}
+                <div className="rounded-xl border border-white/8 bg-[#111116] overflow-hidden">
+                  <div className="px-4 py-3 border-b border-white/6">
+                    <p className="text-xs font-medium text-slate-400">Scan results</p>
+                  </div>
+                  <div className="divide-y divide-white/4">
+                    {SERVICE_ORDER.map(svc => {
+                      const { label, Icon } = SERVICE_META[svc];
+                      const items    = scanItems[svc] ?? [];
+                      const vulns    = items.filter(i => i.status === 'vulnerable');
+                      const hasData  = items.length > 0;
+                      return (
+                        <div key={svc} className={`flex items-center gap-3 px-4 py-3 ${hasData && vulns.length > 0 ? 'bg-red-950/10' : ''}`}>
+                          <Icon size={13} className={hasData && vulns.length > 0 ? 'text-red-400' : hasData ? 'text-slate-400' : 'text-slate-700'} />
+                          <span className="text-sm text-slate-300 w-28 shrink-0">{label}</span>
+                          <div className="flex-1 flex flex-wrap gap-1.5">
+                            {items.map((item, i) => (
+                              <span key={i} className={`text-xs font-mono px-2 py-0.5 rounded border ${
+                                item.status === 'vulnerable'
+                                  ? 'text-red-400 border-red-800/40 bg-red-950/20'
+                                  : 'text-slate-500 border-white/6 bg-white/2'
+                              }`}>
+                                {item.status === 'vulnerable' ? '⚠ ' : '✓ '}{item.resource}
+                              </span>
+                            ))}
+                            {!hasData && <span className="text-xs text-slate-700">—</span>}
+                          </div>
+                          {hasData && vulns.length > 0 && (
+                            <span className="text-xs text-red-400 font-medium shrink-0">{vulns.length} issue{vulns.length !== 1 ? 's' : ''}</span>
+                          )}
+                          {hasData && vulns.length === 0 && (
+                            <span className="text-xs text-slate-600 shrink-0">Clean</span>
+                          )}
                         </div>
-                      )}
-                      <div className="max-h-52 overflow-y-auto">
-                        {iamUsers.filter(u => u !== credentialUser).map(u => {
-                          const checked = protectedUsers.includes(u);
-                          return (
-                            <label key={u} className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/3 cursor-pointer transition-colors">
-                              <input type="checkbox" checked={checked}
-                                onChange={() => setProtectedUsers(prev => checked ? prev.filter(x => x !== u) : [...prev, u])}
-                                className="accent-violet-500" />
-                              <span className="text-xs font-mono text-slate-300 truncate">{u}</span>
-                            </label>
-                          );
-                        })}
-                        {iamUsers.filter(u => u !== credentialUser).length === 0 && (
-                          <p className="text-xs text-slate-600 px-4 py-3">No other IAM users found.</p>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                      );
+                    })}
+                  </div>
                 </div>
+              </div>
+            )}
+
+            {/* ── Post-scan feedback ── */}
+            {scanState === 'complete' && lastScan && feedbackScanId !== lastScan.id && (
+              <div className="rounded-xl border border-white/8 bg-[#111116] p-5">
+                {feedbackSubmitted ? (
+                  <div className="flex items-center gap-2 text-sm text-slate-400">
+                    <CheckCircle size={15} className="text-violet-400 shrink-0" />
+                    Thanks for your feedback!
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between mb-4">
+                      <p className="text-sm font-medium text-slate-300">How was this scan?</p>
+                      <button onClick={() => setFeedbackScanId(lastScan.id)} className="text-xs text-slate-600 hover:text-slate-400 transition-colors">Skip</button>
+                    </div>
+                    <div className="flex items-center gap-1 mb-4">
+                      {[1, 2, 3, 4, 5].map(star => (
+                        <button
+                          key={star}
+                          onClick={() => setFeedbackRating(star)}
+                          onMouseEnter={() => setFeedbackHover(star)}
+                          onMouseLeave={() => setFeedbackHover(0)}
+                          className="text-2xl transition-colors leading-none"
+                        >
+                          <span className={(feedbackHover || feedbackRating) >= star ? 'text-yellow-400' : 'text-slate-700'}>★</span>
+                        </button>
+                      ))}
+                    </div>
+                    {feedbackRating > 0 && (
+                      <>
+                        <textarea
+                          value={feedbackMessage}
+                          onChange={e => setFeedbackMessage(e.target.value)}
+                          placeholder="Anything else to share? (optional)"
+                          rows={2}
+                          className="w-full rounded-lg px-3 py-2 text-sm text-slate-300 placeholder-slate-600 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500/30 transition-colors mb-3"
+                          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+                        />
+                        <button
+                          onClick={async () => {
+                            const token = await getToken();
+                            await fetch(`${API}/api/feedback`, {
+                              method: 'POST',
+                              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ scan_id: lastScan.id, account_name: selectedAccount, rating: feedbackRating, message: feedbackMessage }),
+                            }).catch(() => {});
+                            setFeedbackSubmitted(true);
+                            setFeedbackScanId(lastScan.id);
+                          }}
+                          className="text-xs bg-violet-500 hover:bg-violet-400 text-white font-medium px-4 py-2 rounded-lg transition-colors"
+                        >
+                          Submit feedback
+                        </button>
+                      </>
+                    )}
+                  </>
+                )}
               </div>
             )}
 
           </>)}
 
-          {/* ── Compliance ────────────────────────────────────────────────────── */}
-          {view === 'compliance' && (<>
-
-            {/* Score banner */}
-            <div className="bg-[#111116] border border-white/8 rounded-xl p-6 flex items-center gap-8 shadow-sm">
-              {cisScore
-                ? <ScoreGauge score={cisScore.score} total={cisScore.total} percentage={cisScore.percentage} />
-                : <div className="w-32 h-32 rounded-full border-8 border-white/8 flex items-center justify-center">
-                    <span className="text-slate-700 text-xs">Loading…</span>
-                  </div>
-              }
-              <div>
-                <h2 className="text-base font-semibold text-slate-100 mb-1">CIS AWS Foundations Benchmark</h2>
-                <p className="text-sm text-slate-500 mb-3">
-                  {cisScore
-                    ? `${cisScore.score} of ${cisScore.total} controls are currently passing.`
-                    : 'Run a scan to evaluate your compliance posture.'}
-                </p>
-                {cisScore && (
-                  <div className="flex gap-4 text-xs">
-                    <span className="flex items-center gap-1.5 text-violet-400">
-                      <span className="w-2 h-2 rounded-full bg-violet-400" />{cisScore.score} passing
-                    </span>
-                    <span className="flex items-center gap-1.5 text-red-400">
-                      <span className="w-2 h-2 rounded-full bg-red-400" />{cisScore.total - cisScore.score} failing
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Controls grid */}
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xs font-semibold text-slate-600 uppercase tracking-widest">Controls</h2>
-                {cisScore && <span className="text-xs text-slate-500">{cisScore.score}/{cisScore.total} passing</span>}
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {checks.map(check => (
-                  <div key={check.id} className={`rounded-xl border p-4 shadow-sm ${
-                    check.status === 'VULNERABLE'
-                      ? 'bg-red-950/20 border-red-800/40'
-                      : 'bg-[#111116] border-white/8'
-                  }`}>
-                    <div className="flex items-center justify-between mb-3">
-                      <ShieldAlert size={14} className={check.status === 'VULNERABLE' ? 'text-red-400' : 'text-violet-400'} />
-                      <span className={`text-xs font-medium ${check.status === 'VULNERABLE' ? 'text-red-400' : 'text-violet-400'}`}>
-                        {check.status === 'VULNERABLE' ? 'Vulnerable' : 'Secure'}
-                      </span>
-                    </div>
-                    <p className="text-sm font-medium text-slate-200 leading-tight mb-1">{check.name}</p>
-                    <p className="text-xs text-slate-500 leading-tight line-clamp-2">{check.description}</p>
-                  </div>
-                ))}
-                {checks.length === 0 && [1,2,3,4,5,6,7,8].map(i => (
-                  <div key={i} className="h-24 bg-[#111116] border border-white/8 rounded-xl animate-pulse" />
-                ))}
-              </div>
-            </div>
-
-          </>)}
 
           {/* ── History ───────────────────────────────────────────────────────── */}
           {view === 'history' && (<>
 
             {/* Summary stats */}
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-4 gap-4">
               {[
-                { label: 'Total scans',  value: metrics?.total_scans  ?? '—', sub: 'all time',      Icon: Activity,   color: 'text-slate-100'   },
-                { label: 'Success rate', value: metrics?.success_rate ?? '—', sub: 'fixes applied', Icon: TrendingUp, color: 'text-violet-400' },
-                { label: 'Avg fix time', value: metrics?.avg_mttr     ?? '—', sub: 'per scan',      Icon: Clock,      color: 'text-slate-100'   },
+                { label: 'Total scans',         value: String(metrics?.total_scans ?? '—'), sub: 'all time',        Icon: Activity,   color: 'text-slate-100'  },
+                { label: 'Success rate',        value: metrics?.success_rate ?? '—',        sub: 'scans completed',   Icon: TrendingUp, color: 'text-violet-400' },
+                { label: 'Avg fix time',        value: metrics?.avg_mttr ?? '—',            sub: 'per scan',        Icon: Clock,      color: 'text-slate-100'  },
+                { label: 'Verification rate',   value: metrics?.verification_pass_rate ?? 'N/A', sub: 'fixes confirmed', Icon: ShieldCheck, color: 'text-violet-400' },
               ].map(({ label, value, sub, Icon, color }) => (
-                <div key={label} className="bg-[#111116] border border-white/8 rounded-xl p-5 shadow-sm">
+                <div key={label} className="bg-[#111116] border border-white/8 rounded-xl p-5">
                   <div className="flex items-center justify-between mb-3">
                     <p className="text-xs text-slate-500 font-medium">{label}</p>
                     <Icon size={14} className="text-slate-700" />
                   </div>
-                  <p className={`text-2xl font-bold ${color}`}>{value}</p>
+                  <p className={`text-2xl font-bold tabular-nums ${color}`} style={{ fontFamily: "'JetBrains Mono', monospace" }}>{value}</p>
                   <p className="text-xs text-slate-600 mt-1">{sub}</p>
                 </div>
               ))}
@@ -1123,7 +1302,10 @@ export default function Dashboard() {
                         <ChevronRight size={14} className={`text-slate-600 shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                         <div className="flex-1 min-w-0 grid grid-cols-5 gap-4 items-center">
                           <div className="col-span-2">
-                            <p className="text-xs text-slate-400">{new Date(scan.start_time).toLocaleString()}</p>
+                            <div className="flex items-center gap-2">
+                              <p className="text-xs text-slate-400">{new Date(scan.start_time).toLocaleString()}</p>
+                              <span className="text-xs px-1.5 py-0.5 rounded font-medium text-slate-400 border border-white/8 bg-white/4">{scan.account_name || 'Default'}</span>
+                            </div>
                             <p className="text-xs text-slate-600 font-mono mt-0.5">{scan.id}</p>
                           </div>
                           <div className="text-center">
@@ -1230,6 +1412,167 @@ export default function Dashboard() {
             )}
 
           </>)}
+
+          {/* ── SETTINGS ─────────────────────────────────────────────────────── */}
+          {view === 'settings' && (
+            <div className="space-y-6 max-w-2xl">
+
+              {/* Connected accounts */}
+              <div className="rounded-xl border border-white/8 bg-[#111116] overflow-hidden">
+                <div className="px-5 py-4 border-b border-white/6">
+                  <p className="text-sm font-semibold text-slate-100">Connected AWS accounts</p>
+                  <p className="text-xs text-slate-600 mt-0.5">Disconnecting removes the credentials from Remedi immediately.</p>
+                </div>
+                <div className="divide-y divide-white/4">
+                  {accounts.length === 0 ? (
+                    <div className="px-5 py-6 flex flex-col items-center gap-2">
+                      <p className="text-sm text-slate-600">No AWS accounts connected.</p>
+                      <Link href="/onboarding" className="text-xs text-violet-400 hover:text-violet-300 transition-colors">Connect an account →</Link>
+                    </div>
+                  ) : (
+                    accounts.map(a => (
+                      <div key={a.account_name} className="flex items-center justify-between px-5 py-3.5">
+                        <div>
+                          <p className="text-sm font-medium text-slate-200">{a.account_name}</p>
+                          {a.account_name === selectedAccount && credentialUser && (
+                            <p className="text-xs text-slate-600 font-mono mt-0.5">{credentialUser}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => handleDeleteAccount(a.account_name)}
+                          disabled={scanState === 'scanning' || scanState === 'remediating'}
+                          className="text-xs text-slate-500 hover:text-red-400 border border-white/8 hover:border-red-500/30 hover:bg-red-500/5 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Disconnect
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+                {accounts.length > 0 && accounts.length < 3 && (
+                  <div className="px-5 py-3 border-t border-white/6">
+                    <Link href="/onboarding" className="text-xs text-violet-400 hover:text-violet-300 transition-colors">+ Connect another account</Link>
+                  </div>
+                )}
+              </div>
+
+              {/* Protected IAM users */}
+              <div className="rounded-xl border border-white/8 bg-[#111116] overflow-hidden">
+                <div className="px-5 py-4 border-b border-white/6">
+                  <p className="text-sm font-semibold text-slate-100">Protected IAM users</p>
+                  <p className="text-xs text-slate-600 mt-0.5">These users will never be modified or removed by Remedi during remediation.</p>
+                </div>
+                <div className="divide-y divide-white/4">
+                  {/* Auto-protected credential user */}
+                  {credentialUser && (
+                    <div className="flex items-center justify-between px-5 py-3.5">
+                      <div className="flex items-center gap-3">
+                        <Lock size={12} className="text-slate-600 shrink-0" />
+                        <span className="text-sm font-mono text-slate-400">{credentialUser}</span>
+                      </div>
+                      <span className="text-xs text-slate-600 border border-white/6 px-2 py-0.5 rounded-full">auto-protected</span>
+                    </div>
+                  )}
+                  {/* Selectable users */}
+                  {iamUsers.filter(u => u !== credentialUser).length === 0 ? (
+                    <div className="px-5 py-4">
+                      <p className="text-xs text-slate-600">{iamUsers.length === 0 ? 'Connect an AWS account to load IAM users.' : 'No other IAM users in this account.'}</p>
+                    </div>
+                  ) : (
+                    iamUsers.filter(u => u !== credentialUser).map(u => {
+                      const checked = protectedUsers.includes(u);
+                      return (
+                        <label key={u} className="flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-white/2 transition-colors">
+                          <span className="text-sm font-mono text-slate-300">{u}</span>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => setProtectedUsers(prev => checked ? prev.filter(x => x !== u) : [...prev, u])}
+                            className="accent-violet-500 w-4 h-4"
+                          />
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+                {protectedUsers.length > 0 && (
+                  <div className="px-5 py-3 border-t border-white/6 bg-violet-500/5">
+                    <p className="text-xs text-violet-400">{protectedUsers.length} user{protectedUsers.length > 1 ? 's' : ''} protected · applied to next scan</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Danger zone */}
+              <div className="rounded-xl border border-red-500/20 bg-red-950/5 overflow-hidden">
+                <div className="px-5 py-4 border-b border-red-500/10">
+                  <p className="text-sm font-semibold text-red-400">Danger zone</p>
+                </div>
+                <div className="px-5 py-4 flex items-start justify-between gap-6">
+                  <div>
+                    <p className="text-sm font-medium text-slate-200">Delete account</p>
+                    <p className="text-xs text-slate-600 mt-0.5">Permanently deletes your Remedi account and all connected AWS credentials. This cannot be undone.</p>
+                  </div>
+                  {confirmDelete ? (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs text-slate-500">Are you sure?</span>
+                      <button
+                        onClick={async () => {
+                          const token = await getToken();
+                          await fetch(`${API}/api/user`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+                          signOut({ redirectUrl: '/' });
+                        }}
+                        className="text-xs bg-red-500 hover:bg-red-400 text-white px-3 py-1.5 rounded-lg transition-colors font-medium"
+                      >
+                        Yes, delete
+                      </button>
+                      <button
+                        onClick={() => setConfirmDelete(false)}
+                        className="text-xs text-slate-500 hover:text-slate-300 px-3 py-1.5 rounded-lg border border-white/8 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmDelete(true)}
+                      className="shrink-0 text-xs text-red-400 hover:text-red-300 border border-red-500/25 hover:border-red-500/50 hover:bg-red-500/5 px-3 py-1.5 rounded-lg transition-colors"
+                    >
+                      Delete account
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Support / Contact */}
+              <div className="rounded-xl border border-white/8 bg-[#111116] overflow-hidden">
+                <div className="px-5 py-4 border-b border-white/6 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-100">Get in touch</p>
+                    <p className="text-xs text-slate-600 mt-0.5">Questions, bugs, or ideas? Reach out directly.</p>
+                  </div>
+                  <Link href="/developer" className="text-xs text-violet-400 hover:text-violet-300 transition-colors">Developer page →</Link>
+                </div>
+                <div className="px-5 py-4 flex flex-col gap-3">
+                  <a href="mailto:glen.louis08@gmail.com" target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-3 text-sm text-slate-400 hover:text-violet-400 transition-colors group">
+                    <span className="w-7 h-7 rounded-lg flex items-center justify-center border border-white/8 group-hover:border-violet-500/30 transition-colors text-xs">✉</span>
+                    glen.louis08@gmail.com
+                  </a>
+                  <a href="https://www.linkedin.com/in/marian-glen-louis" target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-3 text-sm text-slate-400 hover:text-violet-400 transition-colors group">
+                    <span className="w-7 h-7 rounded-lg flex items-center justify-center border border-white/8 group-hover:border-violet-500/30 transition-colors text-xs">in</span>
+                    LinkedIn
+                  </a>
+                  <a href="https://github.com/glenlouis8" target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-3 text-sm text-slate-400 hover:text-violet-400 transition-colors group">
+                    <span className="w-7 h-7 rounded-lg flex items-center justify-center border border-white/8 group-hover:border-violet-500/30 transition-colors text-xs">⌥</span>
+                    GitHub
+                  </a>
+                </div>
+              </div>
+
+            </div>
+          )}
 
         </div>
       </main>

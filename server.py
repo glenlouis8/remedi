@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from mcp_server.database import (
     reset_to_vulnerable, get_all_status, init_db,
     get_scan_history, get_remediation_breakdown, get_scan_detail, get_connection,
-    purge_expired_credentials,
+    purge_expired_credentials, count_scans_today, save_feedback,
 )
 from remedi_platform.auth import get_current_user
 from remedi_platform.accounts import (
@@ -189,6 +189,61 @@ def disconnect_one(account_name: str, user: dict = Depends(get_current_user)):
     return {"status": "disconnected", "account_name": account_name}
 
 
+@app.get("/api/scans/remaining")
+def scans_remaining(account_name: str = "Default", user: dict = Depends(get_current_user)):
+    used = count_scans_today(user["sub"], account_name)
+    return {"remaining": max(0, 3 - used), "limit": 3, "used": used}
+
+
+class FeedbackRequest(BaseModel):
+    scan_id: str
+    account_name: str = "Default"
+    rating: int
+    message: str = ""
+
+@app.post("/api/feedback")
+def submit_feedback(body: FeedbackRequest, user: dict = Depends(get_current_user)):
+    if not 1 <= body.rating <= 5:
+        raise HTTPException(status_code=400, detail="Rating must be 1-5")
+    save_feedback(user["sub"], body.scan_id, body.rating, body.message)
+    webhook_url = os.environ.get("DISCORD_FEEDBACK_WEBHOOK")
+    if webhook_url:
+        stars = "★" * body.rating + "☆" * (5 - body.rating)
+        content = (
+            f"⭐ **New Feedback — Remedi**\n"
+            f"Rating: {stars} ({body.rating}/5)\n"
+            f"Scan: `{body.scan_id}` · Account: `{body.account_name}`"
+        )
+        if body.message:
+            content += f"\nMessage: \"{body.message}\""
+        try:
+            import requests as req
+            req.post(webhook_url, json={"content": content}, timeout=5)
+        except Exception:
+            pass
+    return {"status": "received"}
+
+
+@app.delete("/api/user")
+def delete_user(user: dict = Depends(get_current_user)):
+    """Delete the Clerk user account and all their AWS credentials."""
+    import requests as req
+    user_id = user["sub"]
+    clerk_secret = os.environ.get("CLERK_SECRET_KEY", "")
+    if not clerk_secret:
+        raise HTTPException(status_code=500, detail="Server misconfiguration")
+    # Delete AWS credentials first
+    delete_aws_credentials(user_id)
+    # Delete Clerk user via backend API
+    resp = req.delete(
+        f"https://api.clerk.com/v1/users/{user_id}",
+        headers={"Authorization": f"Bearer {clerk_secret}"},
+    )
+    if resp.status_code not in (200, 204):
+        raise HTTPException(status_code=502, detail="Failed to delete account")
+    return {"status": "deleted"}
+
+
 @app.get("/api/iam/users")
 def list_iam_users(account_name: str = "Default", user: dict = Depends(get_current_user)):
     import boto3, botocore.exceptions
@@ -236,7 +291,7 @@ def get_metrics(user: dict = Depends(get_current_user)):
     try:
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         c.execute(
-            "SELECT * FROM scans WHERE status IN ('COMPLETED', 'ABORTED') AND user_id = %s",
+            "SELECT * FROM scans WHERE status IN ('COMPLETED', 'ABORTED', 'SECURE', 'VERIFIED', 'FAILED') AND user_id = %s",
             (user_id,),
         )
         scans = c.fetchall()
@@ -257,17 +312,24 @@ def get_metrics(user: dict = Depends(get_current_user)):
             "total_scans": 0,
         }
 
-    durations, ttd_list, success_rates = [], [], []
-    verified_count = completed_count = 0
+    durations, ttd_list = [], []
+    verified_count = completed_count = aborted_count = 0
 
     for s in scans:
-        if s["status"] == "COMPLETED":
+        status = s["status"]
+
+        if status in ("COMPLETED", "SECURE", "VERIFIED"):
+            completed_count += 1
             try:
                 start = s["start_time"] if isinstance(s["start_time"], datetime.datetime) else datetime.datetime.fromisoformat(s["start_time"])
                 end = s["end_time"] if isinstance(s["end_time"], datetime.datetime) else datetime.datetime.fromisoformat(s["end_time"])
                 durations.append((end - start).total_seconds())
             except Exception:
                 pass
+            if s.get("verified"):
+                verified_count += 1
+        elif status in ("ABORTED", "FAILED"):
+            aborted_count += 1
 
         try:
             if s.get("gate_time"):
@@ -277,20 +339,17 @@ def get_metrics(user: dict = Depends(get_current_user)):
         except Exception:
             pass
 
-        if s["status"] == "COMPLETED" and s["findings_count"]:
-            success_rates.append(min(1.0, s["remediations_count"] / s["findings_count"]))
-            completed_count += 1
-            if s.get("verified"):
-                verified_count += 1
+    total = len(scans)
+    success_pct = int(completed_count / total * 100) if total else 100
 
     return {
         "avg_mttr": f"{int(sum(durations) / len(durations) if durations else 0)}s",
         "avg_ttd": f"{int(sum(ttd_list) / len(ttd_list) if ttd_list else 0)}s",
-        "success_rate": f"{int((sum(success_rates) / len(success_rates) * 100) if success_rates else 100)}%",
+        "success_rate": f"{success_pct}%",
         "verification_pass_rate": f"{int(verified_count / completed_count * 100)}%" if completed_count else "N/A",
         "total_cost": f"${totals.get('total_cost', 0.0) or 0:.4f}",
         "total_tokens": totals.get("total_tokens", 0) or 0,
-        "total_scans": len(scans),
+        "total_scans": total,
     }
 
 
@@ -319,6 +378,10 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     if not creds:
         raise HTTPException(status_code=400, detail="No AWS account connected. Please complete onboarding first.")
 
+    used = count_scans_today(user_id, body.account_name or "Default")
+    if used >= 3:
+        raise HTTPException(status_code=429, detail="Scan limit reached: 3 scans per account per day. Resets at midnight.")
+
     env = dict(creds)
 
     # Always auto-protect the IAM user whose credentials we're using
@@ -340,6 +403,7 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
         env["PROTECTED_IAM_USERS"] = ",".join(u.strip() for u in protected if u.strip())
 
     env["REMEDI_USER_ID"] = user_id
+    env["REMEDI_ACCOUNT_NAME"] = body.account_name or "Default"
 
     manager = _get_manager(user_id)
     manager.start_agent(env)

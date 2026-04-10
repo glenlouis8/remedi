@@ -80,9 +80,11 @@ export default function HomePage() {
               <ShieldCheck size={15} className="text-violet-400" />
             </div>
             <span className="font-semibold tracking-tight text-white">Remedi</span>
+            <span className="text-xs font-medium px-1.5 py-0.5 rounded-full border font-mono-code" style={{ color: '#f59e0b', borderColor: 'rgba(245,158,11,0.25)', background: 'rgba(245,158,11,0.08)' }}>beta</span>
           </div>
           <div className="flex items-center gap-6">
             <Link href="/about" className="text-sm text-slate-400 hover:text-white transition-colors">About</Link>
+            <Link href="/developer" className="text-sm text-slate-400 hover:text-white transition-colors">Developer</Link>
             {isSignedIn ? (
               <>
                 <Link href="/dashboard" className="text-sm bg-violet-500 hover:bg-violet-400 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
@@ -249,6 +251,7 @@ export default function HomePage() {
           </div>
           <span>© {new Date().getFullYear()} — AWS credentials encrypted at rest, deleted on sign out</span>
           <Link href="/about" className="hover:text-slate-400 transition-colors">About</Link>
+          <Link href="/developer" className="hover:text-slate-400 transition-colors">Developer</Link>
         </footer>
       </div>
     </>

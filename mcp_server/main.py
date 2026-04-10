@@ -351,7 +351,12 @@ def remediate_vpc_flow_logs(vpc_id: str) -> str:
             DeliverLogsPermissionArn=role_arn,
         )
         update_status("check_vpc","SAFE")
-        return f"SUCCESS: Flow Logs enabled for {vpc_id}."
+        return (
+            f"SUCCESS: Flow Logs enabled for {vpc_id}. "
+            f"Note: an IAM role named 'AegisFlowLogRole' was created in your account to allow "
+            f"VPC Flow Logs to deliver to CloudWatch. This role is required for flow logs to keep "
+            f"working and will persist in your account — do not delete it."
+        )
     except Exception as e:
         return f"ERROR enabling flow logs: {str(e)}"
 

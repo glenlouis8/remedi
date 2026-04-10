@@ -134,6 +134,18 @@ def init_db():
     c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS gate_time TIMESTAMP")
     c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT FALSE")
     c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS audit_summary TEXT")
+    c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT 'Default'")
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS feedback (
+            id SERIAL PRIMARY KEY,
+            user_id TEXT,
+            scan_id TEXT,
+            rating INTEGER,
+            message TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
 
     c.execute('''
         CREATE TABLE IF NOT EXISTS remediation_logs (
@@ -179,14 +191,14 @@ def purge_expired_credentials():
         conn.close()
 
 
-def start_scan(scan_id: str, user_id: str | None = None):
+def start_scan(scan_id: str, user_id: str | None = None, account_name: str = "Default"):
     conn = get_connection()
     try:
         c = conn.cursor()
         now = datetime.datetime.now().isoformat()
         c.execute(
-            "INSERT INTO scans (id, user_id, start_time, status) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
-            (scan_id, user_id, now, "RUNNING")
+            "INSERT INTO scans (id, user_id, account_name, start_time, status) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+            (scan_id, user_id, account_name, now, "RUNNING")
         )
         conn.commit()
     finally:
@@ -251,6 +263,22 @@ def reset_to_vulnerable():
     finally:
         conn.close()
 
+def count_scans_today(user_id: str, account_name: str) -> int:
+    """Returns number of scans started today for this user+account combo."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COUNT(*) FROM scans
+            WHERE user_id = %s
+              AND account_name = %s
+              AND start_time >= CURRENT_DATE
+        """, (user_id, account_name))
+        return cur.fetchone()[0]
+    finally:
+        conn.close()
+
+
 def get_scan_history(user_id: str | None = None):
     """Returns last 10 completed scans for the history timeline."""
     conn = get_connection()
@@ -258,7 +286,7 @@ def get_scan_history(user_id: str | None = None):
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         if user_id:
             cur.execute("""
-                SELECT id, start_time, end_time, findings_count, remediations_count, status, verified
+                SELECT id, account_name, start_time, end_time, findings_count, remediations_count, status, verified
                 FROM scans
                 WHERE status IN ('COMPLETED', 'ABORTED', 'SECURE') AND user_id = %s
                 ORDER BY start_time DESC
@@ -266,7 +294,7 @@ def get_scan_history(user_id: str | None = None):
             """, (user_id,))
         else:
             cur.execute("""
-                SELECT id, start_time, end_time, findings_count, remediations_count, status, verified
+                SELECT id, account_name, start_time, end_time, findings_count, remediations_count, status, verified
                 FROM scans
                 WHERE status IN ('COMPLETED', 'ABORTED', 'SECURE')
                 ORDER BY start_time DESC
@@ -329,3 +357,16 @@ def get_scan_detail(scan_id: str):
     finally:
         conn.close()
     return scan
+
+
+def save_feedback(user_id: str, scan_id: str, rating: int, message: str):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO feedback (user_id, scan_id, rating, message) VALUES (%s, %s, %s, %s)",
+            (user_id, scan_id, rating, message)
+        )
+        conn.commit()
+    finally:
+        conn.close()

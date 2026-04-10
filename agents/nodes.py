@@ -223,7 +223,8 @@ def orchestrator_node(state: AgentState):
     protected_clause = _get_protected_clause()
     scan_id = state.get("scan_id", "UNKNOWN")
     user_id = os.environ.get("REMEDI_USER_ID")
-    start_scan(scan_id, user_id=user_id)
+    account_name = os.environ.get("REMEDI_ACCOUNT_NAME", "Default")
+    start_scan(scan_id, user_id=user_id, account_name=account_name)
 
     tasks = [
         (

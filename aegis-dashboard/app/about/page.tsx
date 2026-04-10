@@ -26,6 +26,7 @@ export default function AboutPage() {
         </Link>
         <div className="flex items-center gap-6">
           <Link href="/about" className="text-sm text-violet-400 font-medium">About</Link>
+          <Link href="/developer" className="text-sm text-slate-400 hover:text-white transition-colors">Developer</Link>
           {isSignedIn ? (
             <>
               <Link href="/dashboard" className="text-sm bg-violet-500 hover:bg-violet-400 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
@@ -68,9 +69,6 @@ export default function AboutPage() {
               className="inline-flex items-center gap-2 bg-violet-500 hover:bg-violet-400 text-white font-semibold px-6 py-3 rounded-xl transition-colors"
             >
               {isSignedIn ? 'Go to dashboard' : 'Get started free'} <ArrowRight size={15} />
-            </Link>
-            <Link href="/" className="text-sm text-slate-400 hover:text-white transition-colors">
-              See how it works →
             </Link>
           </div>
         </section>
@@ -193,7 +191,7 @@ export default function AboutPage() {
                 {
                   Icon: Globe, label: 'VPC',
                   audit: 'Checks every VPC for disabled flow logs.',
-                  fix: 'Creates a CloudWatch log group, an IAM flow log role, and enables flow logs.',
+                  fix: 'Creates a CloudWatch log group and an IAM role (AegisFlowLogRole), then enables flow logs. Both resources persist in your account — the role is required for flow logs to keep delivering.',
                 },
                 {
                   Icon: Shield, label: 'Security Groups',
@@ -203,7 +201,7 @@ export default function AboutPage() {
                 {
                   Icon: Server, label: 'EC2',
                   audit: 'Flags instances with IMDSv1 enabled or unencrypted root volumes.',
-                  fix: 'Enforces IMDSv2 via metadata options. Stops instances with unencrypted volumes.',
+                  fix: 'Enforces IMDSv2 via metadata options. Instances with unencrypted root volumes are hard-stopped as a quarantine measure — running workloads on those instances will be interrupted.',
                 },
                 {
                   Icon: Database, label: 'RDS',
@@ -218,7 +216,7 @@ export default function AboutPage() {
                 {
                   Icon: FileText, label: 'CloudTrail',
                   audit: 'Flags accounts with no trails, or trails with logging disabled.',
-                  fix: 'Creates a new trail with a dedicated S3 bucket and starts logging.',
+                  fix: 'Creates a trail named remedi-audit-trail and a dedicated S3 bucket for log delivery. Both persist after the scan. The S3 bucket will accumulate CloudTrail log files over time.',
                 },
               ].map(({ Icon, label, audit, fix }) => (
                 <div key={label} className="rounded-xl border border-white/6 p-5" style={{ background: 'rgba(14,14,18,0.6)' }}>
