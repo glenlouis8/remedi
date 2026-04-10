@@ -101,8 +101,11 @@ export default function OnboardingPage() {
         {/* Left: context */}
         <div className="flex flex-col justify-center">
           <h1 className="text-3xl font-bold text-white mb-3 leading-snug">Connect your AWS account</h1>
-          <p className="text-slate-400 mb-8 leading-relaxed">
+          <p className="text-slate-400 mb-2 leading-relaxed">
             Remedi creates a dedicated IAM user with least-privilege permissions — only what it needs to scan and fix your account, nothing more.
+          </p>
+          <p className="text-xs text-amber-500/80 bg-amber-500/8 border border-amber-500/15 rounded-lg px-3 py-2 mb-6">
+            You need at least one AWS account connected to access the dashboard.
           </p>
           <div className="space-y-4">
             {[
