@@ -43,9 +43,7 @@ orchestrator → report_generator → safety_gate ─[your approval]─► remed
 
 ```
 ┌──────────────────────────────────────────────────┐
-│                   frontend                        │
-│        Next.js 15 · Clerk · Tailwind CSS          │
-│   Real-time scan streaming · CIS compliance UI    │
+│                   frontend/                       │
 └───────────────────┬──────────────────────────────┘
                     │ HTTP / StreamingResponse
 ┌───────────────────▼──────────────────────────────┐
@@ -137,7 +135,6 @@ CLERK_SECRET_KEY=sk_...
 pip install -r requirements.txt
 uvicorn server:app --port 8080 --reload
 
-# Frontend
 cd frontend && npm install && npm run dev
 ```
 
