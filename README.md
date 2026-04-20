@@ -137,35 +137,47 @@ uv add pytest "moto[s3,iam,ec2,rds,cloudtrail,logs]" httpx --dev
 .venv/bin/python -m pytest tests/ -v
 ```
 
-```
-tests/test_accounts.py::test_encrypt_decrypt_roundtrip PASSED
-tests/test_accounts.py::test_secret_key_roundtrip PASSED
-tests/test_accounts.py::test_missing_encryption_key_raises PASSED
-tests/test_accounts.py::test_different_keys_cannot_decrypt PASSED
-tests/test_mcp_tools.py::test_remediate_s3_blocks_all_public_access PASSED
-tests/test_mcp_tools.py::test_audit_s3_detects_public_bucket PASSED
-tests/test_mcp_tools.py::test_audit_s3_detects_secure_bucket PASSED
-tests/test_mcp_tools.py::test_audit_s3_no_buckets PASSED
-tests/test_mcp_tools.py::test_restrict_iam_user_strips_inline_policies PASSED
-tests/test_mcp_tools.py::test_list_iam_users_returns_all PASSED
-tests/test_mcp_tools.py::test_revoke_security_group_ingress_removes_public_rule PASSED
-tests/test_mcp_tools.py::test_revoke_idempotent_when_already_clean PASSED
-tests/test_mcp_tools.py::test_audit_security_groups_flags_open_world PASSED
-tests/test_mcp_tools.py::test_enforce_imdsv2 XFAIL (moto bug: modify_instance_metadata_options not implemented)
-tests/test_mcp_tools.py::test_audit_ec2_finds_running_instances PASSED
-tests/test_mcp_tools.py::test_remediate_rds_disables_public_access PASSED
-tests/test_mcp_tools.py::test_audit_rds_detects_public_instance PASSED
-tests/test_remediator.py::test_single_finding_parses PASSED
-tests/test_remediator.py::test_multiple_findings_parse PASSED
-tests/test_remediator.py::test_secure_system_returns_no_tasks PASSED
-tests/test_remediator.py::test_all_nine_tools_are_recognized PASSED
-tests/test_remediator.py::test_resource_name_with_hyphens_and_numbers PASSED
-tests/test_remediator.py::test_resource_name_with_dots PASSED
-tests/test_remediator.py::test_zero_tasks_from_empty_string PASSED
-tests/test_remediator.py::test_manual_review_line_not_parsed PASSED
+**`tests/test_accounts.py`** — Fernet credential encryption
 
-24 passed, 1 xfailed in 1.96s
-```
+| Test | What it verifies |
+|------|-----------------|
+| `test_encrypt_decrypt_roundtrip` | Encrypted AWS credentials decrypt back to the original value |
+| `test_secret_key_roundtrip` | Secret key survives an encrypt → decrypt cycle |
+| `test_missing_encryption_key_raises` | Missing `ENCRYPTION_KEY` env var raises an error rather than silently failing |
+| `test_different_keys_cannot_decrypt` | A credential encrypted with one key cannot be decrypted with a different key |
+
+**`tests/test_mcp_tools.py`** — AWS remediation tools (production boto3 code against moto's in-memory AWS)
+
+| Test | What it verifies |
+|------|-----------------|
+| `test_remediate_s3_blocks_all_public_access` | Remediating a public bucket enables all 4 Block Public Access flags |
+| `test_audit_s3_detects_public_bucket` | Auditor correctly flags a bucket with public access enabled |
+| `test_audit_s3_detects_secure_bucket` | Auditor does not flag a bucket that is already secure |
+| `test_audit_s3_no_buckets` | Auditor handles an account with no S3 buckets without error |
+| `test_restrict_iam_user_strips_inline_policies` | Remediating an over-privileged IAM user strips all inline policies |
+| `test_list_iam_users_returns_all` | IAM user lister returns every user in the account |
+| `test_revoke_security_group_ingress_removes_public_rule` | Revoke tool removes the `0.0.0.0/0` inbound rule from a security group |
+| `test_revoke_idempotent_when_already_clean` | Running revoke on an already-clean security group does not error |
+| `test_audit_security_groups_flags_open_world` | Auditor flags a security group with unrestricted inbound access |
+| `test_enforce_imdsv2` | *(xfail)* Skipped — moto does not implement `modify_instance_metadata_options` |
+| `test_audit_ec2_finds_running_instances` | Auditor enumerates running EC2 instances correctly |
+| `test_remediate_rds_disables_public_access` | Remediating a public RDS instance sets `PubliclyAccessible = false` |
+| `test_audit_rds_detects_public_instance` | Auditor flags an RDS instance with public access enabled |
+
+**`tests/test_remediator.py`** — Report parser (regex that extracts remediation tasks from the AI report)
+
+| Test | What it verifies |
+|------|-----------------|
+| `test_single_finding_parses` | A single `🔴 [CRITICAL]` line produces exactly one remediation task |
+| `test_multiple_findings_parse` | Multiple findings in one report each produce a task |
+| `test_secure_system_returns_no_tasks` | A clean report with no critical lines produces zero tasks |
+| `test_all_nine_tools_are_recognized` | Every tool name the remediator supports is correctly matched by the regex |
+| `test_resource_name_with_hyphens_and_numbers` | Resource names like `my-bucket-123` parse without error |
+| `test_resource_name_with_dots` | Resource names with dots (e.g. `prod.db`) parse without error |
+| `test_zero_tasks_from_empty_string` | An empty report string produces zero tasks without crashing |
+| `test_manual_review_line_not_parsed` | Lines marked for manual review are not mistakenly queued as automated tasks |
+
+**Result: 24 passed, 1 xfailed (expected — moto limitation)**
 
 ---
 
