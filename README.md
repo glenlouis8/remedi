@@ -6,6 +6,10 @@
 
 Remedi scans your AWS account across 8 services, generates a structured findings report, pauses for human approval, then automatically fixes every vulnerability it found. A verification pass confirms the fixes held.
 
+![Landing page](assets/screenshot-landing.jpeg)
+![Dashboard overview](assets/screenshot-dashboard.jpeg)
+![Scan history](assets/screenshot-history.jpeg)
+
 ---
 
 ## How it works
