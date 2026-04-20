@@ -43,6 +43,7 @@ CLAUDE.md
 # --- PROJECT SPECIFIC ---
 PRODUCT_PLAN.md
 REMEDI_HANDOFF.md
+INTERVIEW.md
 
 # Exclude the local database (we want a fresh DB for each deployment)
 aegis_state.db
@@ -54,6 +55,8 @@ env_vars.yaml
 
 # Exclude PDF artifacts (interview prep, codebase guides, etc.)
 *.pdf
+*.docx
+*.txt
 
 # Exclude uv virtual environment
 .venv/
