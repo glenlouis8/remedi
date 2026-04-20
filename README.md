@@ -137,11 +137,35 @@ uv add pytest "moto[s3,iam,ec2,rds,cloudtrail,logs]" httpx --dev
 .venv/bin/python -m pytest tests/ -v
 ```
 
-| File | What it tests |
-|------|--------------|
-| `tests/test_remediator.py` | Regex parser that extracts remediation tasks from the AI report — the single point of failure if the LLM drifts |
-| `tests/test_accounts.py` | Fernet encryption round-trips, missing key error handling |
-| `tests/test_mcp_tools.py` | Real production boto3 code running against moto's in-memory AWS — S3, IAM, security groups, EC2, RDS |
+```
+tests/test_accounts.py::test_encrypt_decrypt_roundtrip PASSED
+tests/test_accounts.py::test_secret_key_roundtrip PASSED
+tests/test_accounts.py::test_missing_encryption_key_raises PASSED
+tests/test_accounts.py::test_different_keys_cannot_decrypt PASSED
+tests/test_mcp_tools.py::test_remediate_s3_blocks_all_public_access PASSED
+tests/test_mcp_tools.py::test_audit_s3_detects_public_bucket PASSED
+tests/test_mcp_tools.py::test_audit_s3_detects_secure_bucket PASSED
+tests/test_mcp_tools.py::test_audit_s3_no_buckets PASSED
+tests/test_mcp_tools.py::test_restrict_iam_user_strips_inline_policies PASSED
+tests/test_mcp_tools.py::test_list_iam_users_returns_all PASSED
+tests/test_mcp_tools.py::test_revoke_security_group_ingress_removes_public_rule PASSED
+tests/test_mcp_tools.py::test_revoke_idempotent_when_already_clean PASSED
+tests/test_mcp_tools.py::test_audit_security_groups_flags_open_world PASSED
+tests/test_mcp_tools.py::test_enforce_imdsv2 XFAIL (moto bug: modify_instance_metadata_options not implemented)
+tests/test_mcp_tools.py::test_audit_ec2_finds_running_instances PASSED
+tests/test_mcp_tools.py::test_remediate_rds_disables_public_access PASSED
+tests/test_mcp_tools.py::test_audit_rds_detects_public_instance PASSED
+tests/test_remediator.py::test_single_finding_parses PASSED
+tests/test_remediator.py::test_multiple_findings_parse PASSED
+tests/test_remediator.py::test_secure_system_returns_no_tasks PASSED
+tests/test_remediator.py::test_all_nine_tools_are_recognized PASSED
+tests/test_remediator.py::test_resource_name_with_hyphens_and_numbers PASSED
+tests/test_remediator.py::test_resource_name_with_dots PASSED
+tests/test_remediator.py::test_zero_tasks_from_empty_string PASSED
+tests/test_remediator.py::test_manual_review_line_not_parsed PASSED
+
+24 passed, 1 xfailed in 1.96s
+```
 
 ---
 
