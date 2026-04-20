@@ -43,7 +43,7 @@ orchestrator → report_generator → safety_gate ─[your approval]─► remed
 
 ```
 ┌──────────────────────────────────────────────────┐
-│                aegis-dashboard                    │
+│                   frontend                        │
 │        Next.js 15 · Clerk · Tailwind CSS          │
 │   Real-time scan streaming · CIS compliance UI    │
 └───────────────────┬──────────────────────────────┘
@@ -124,7 +124,7 @@ PROTECTED_IAM_USERS=     # comma-separated IAM usernames to never remediate
 FRONTEND_URL=http://localhost:3000
 PORT=8080
 
-# Frontend (aegis-dashboard/.env.local)
+# Frontend (frontend/.env.local)
 NEXT_PUBLIC_API_URL=http://localhost:8080
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_...
 CLERK_SECRET_KEY=sk_...
@@ -138,7 +138,7 @@ pip install -r requirements.txt
 uvicorn server:app --port 8080 --reload
 
 # Frontend
-cd aegis-dashboard && npm install && npm run dev
+cd frontend && npm install && npm run dev
 ```
 
 ### CLI mode (no frontend)
@@ -218,4 +218,4 @@ uv add pytest "moto[s3,iam,ec2,rds,cloudtrail,logs]" httpx --dev
 
 ## Deployment
 
-Deployed on Railway. The backend (`uvicorn server:app`) and frontend (Next.js) run as separate Railway services. `railway.toml` sets the start command. `aegis-dashboard/Dockerfile` handles the containerized frontend build.
+Deployed on Railway. The backend (`uvicorn server:app`) and frontend (Next.js) run as separate Railway services. `railway.toml` sets the start command. `frontend/Dockerfile` handles the containerized frontend build.
