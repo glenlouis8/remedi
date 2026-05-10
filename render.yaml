@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: remedi-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: PROTECTED_IAM_USERS
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: DISCORD_FEEDBACK_WEBHOOK
+        sync: false
+      - key: AWS_DEFAULT_REGION
+        sync: false
+
+  - type: web
+    name: remedi-frontend
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
+      - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
