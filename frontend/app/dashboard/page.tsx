@@ -183,6 +183,7 @@ export default function Dashboard() {
   const [feedbackScanId, setFeedbackScanId]     = useState<string | null>(null);
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
   const [showDisclaimer, setShowDisclaimer]     = useState(false);
+  const [accountChecked, setAccountChecked]   = useState(false);
   const dropdownRef                         = useRef<HTMLDivElement>(null);
   const iamPickerRef                        = useRef<HTMLDivElement>(null);
   const abortRef                            = useRef<AbortController | null>(null);
@@ -195,9 +196,13 @@ export default function Dashboard() {
         const res = await fetch(`${API}/api/accounts/status`, { headers: { Authorization: `Bearer ${token}` } });
         if (res.ok) {
           const data = await res.json();
-          if (!data.connected) router.replace('/onboarding');
+          if (!data.connected) { router.replace('/onboarding'); return; }
         }
-      } catch { /* ignore — backend may not be ready yet */ }
+      } catch {
+        router.replace('/onboarding');
+        return;
+      }
+      setAccountChecked(true);
     };
     checkAccount();
   }, [getToken, router]);
@@ -497,6 +502,10 @@ export default function Dashboard() {
 
   const fixedCount   = remediationSteps.filter(s => s.status === 'success').length;
   const successLabel = fixedCount === 0 ? 'No vulnerabilities found' : 'All threats neutralized';
+
+  if (!accountChecked) {
+    return <div className="flex h-screen items-center justify-center bg-[#09090b]" />;
+  }
 
   return (
     <div className="flex flex-col h-screen bg-[#09090b] overflow-hidden" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
