@@ -96,7 +96,7 @@ class ProcessManager:
                     sys.stdout.flush()
                     if "PAUSING FOR HUMAN REVIEW" in line:
                         self.waiting_for_approval = True
-                    yield line
+                    yield line if line.endswith("\n") else line + "\n"
         finally:
             self.process.stdout.close()
             self.is_running = False
@@ -405,7 +405,15 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     manager = _get_manager(user_id)
     manager.start_agent(env)
     from fastapi.responses import StreamingResponse
-    return StreamingResponse(manager.stream_output(), media_type="text/plain")
+    return StreamingResponse(
+        manager.stream_output(),
+        media_type="text/plain",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+            "Transfer-Encoding": "chunked",
+        },
+    )
 
 
 class ApproveRequest(BaseModel):
