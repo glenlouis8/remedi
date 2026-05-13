@@ -93,6 +93,13 @@ function ProtectedUsersInner() {
             </p>
           </div>
 
+          <div className="rounded-xl border border-amber-500/20 px-4 py-3 flex gap-3" style={{ background: 'rgba(245,158,11,0.06)' }}>
+            <span className="text-amber-400 text-base shrink-0 mt-0.5">⚠️</span>
+            <p className="text-xs text-amber-200/70 leading-relaxed">
+              Protected users are <strong className="text-amber-200">never touched</strong> by Remedi — even if they have AdministratorAccess or other violations. Use this to safeguard your own admin accounts so Remedi doesn&apos;t lock you out of your AWS account during remediation.
+            </p>
+          </div>
+
           <div className="rounded-xl border border-white/8 overflow-hidden" style={{ background: 'rgba(14,14,18,0.8)' }}>
             {loadingUsers ? (
               <div className="px-5 py-8 flex items-center justify-center">
