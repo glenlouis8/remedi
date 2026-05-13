@@ -101,6 +101,35 @@ def delete_aws_credentials(user_id: str, account_name: str | None = None) -> Non
         conn.close()
 
 
+def save_protected_users(user_id: str, account_name: str, users: list[str]) -> None:
+    conn = get_connection()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE aws_accounts SET protected_users = %s WHERE user_id = %s AND account_name = %s",
+            (",".join(u.strip() for u in users if u.strip()), user_id, account_name),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_protected_users(user_id: str, account_name: str) -> list[str]:
+    conn = get_connection()
+    try:
+        c = conn.cursor()
+        c.execute(
+            "SELECT protected_users FROM aws_accounts WHERE user_id = %s AND account_name = %s",
+            (user_id, account_name),
+        )
+        row = c.fetchone()
+    finally:
+        conn.close()
+    if not row or not row[0]:
+        return []
+    return [u.strip() for u in row[0].split(",") if u.strip()]
+
+
 def has_aws_account(user_id: str) -> bool:
     conn = get_connection()
     try:

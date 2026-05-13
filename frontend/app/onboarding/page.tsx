@@ -70,7 +70,7 @@ export default function OnboardingPage() {
         const data = await res.json();
         throw new Error(data.detail ?? 'Failed to connect account');
       }
-      router.push('/dashboard');
+      router.push(`/protected-users?account_name=${encodeURIComponent(accountName.trim() || 'Default')}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {

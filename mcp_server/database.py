@@ -87,6 +87,7 @@ def init_db():
     # Migration: add columns for existing DBs
     c.execute("ALTER TABLE aws_accounts ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
     c.execute("ALTER TABLE aws_accounts ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT 'Default'")
+    c.execute("ALTER TABLE aws_accounts ADD COLUMN IF NOT EXISTS protected_users TEXT DEFAULT ''")
     # Migration: promote PK from user_id-only to (user_id, account_name) if needed
     c.execute("""
         SELECT COUNT(kcu.column_name)

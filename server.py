@@ -18,6 +18,7 @@ from remedi_platform.auth import get_current_user
 from remedi_platform.accounts import (
     save_aws_credentials, get_aws_credentials, has_aws_account,
     delete_aws_credentials, list_aws_accounts, count_aws_accounts,
+    save_protected_users, get_protected_users,
 )
 from remedi_platform.compliance import get_cis_score
 
@@ -145,7 +146,6 @@ class AWSCredentials(BaseModel):
 
 class RunAgentRequest(BaseModel):
     account_name: str = 'Default'
-    protected_users: list[str] = []
 
 
 # --- ROUTES ---
@@ -271,6 +271,21 @@ def list_iam_users(account_name: str = "Default", user: dict = Depends(get_curre
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class ProtectedUsersRequest(BaseModel):
+    account_name: str = "Default"
+    protected_users: list[str]
+
+@app.post("/api/accounts/protected-users")
+def set_protected_users(body: ProtectedUsersRequest, user: dict = Depends(get_current_user)):
+    save_protected_users(user["sub"], body.account_name, body.protected_users)
+    return {"ok": True}
+
+@app.get("/api/accounts/protected-users")
+def get_protected_users_route(account_name: str = "Default", user: dict = Depends(get_current_user)):
+    users = get_protected_users(user["sub"], account_name)
+    return {"protected_users": users}
+
+
 @app.get("/api/compliance")
 def compliance_score(user: dict = Depends(get_current_user)):
     return get_cis_score()
@@ -392,7 +407,7 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     except Exception:
         credential_user = None
 
-    protected = list(body.protected_users)
+    protected = get_protected_users(user_id, body.account_name or "Default")
     if credential_user and credential_user not in protected:
         protected.append(credential_user)
 
