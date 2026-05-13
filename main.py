@@ -27,7 +27,6 @@ def run_interactive_session():
         "messages": [HumanMessage(content="Start the security audit.")],
         "safety_decision": "pending",
         "scan_id": scan_id,
-        "total_tokens": 0,
         "findings_count": 0,
     }
 
@@ -81,8 +80,7 @@ def run_interactive_session():
         end_time = datetime.datetime.now().isoformat()
         update_scan(scan_id,
                     status="SECURE",
-                    end_time=end_time,
-                    total_tokens=snapshot.values.get("total_tokens", 0))
+                    end_time=end_time)
         
         return  # <--- AUTO-EXIT HERE
 

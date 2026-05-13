@@ -63,3 +63,7 @@ env_vars.yaml
 uv.lock
 
 docs/
+
+INTERVIEW_PREP.md
+
+INTERVIEW_RECAP.md

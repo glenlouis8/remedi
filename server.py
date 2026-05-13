@@ -295,11 +295,6 @@ def get_metrics(user: dict = Depends(get_current_user)):
             (user_id,),
         )
         scans = c.fetchall()
-        c.execute(
-            "SELECT SUM(estimated_cost) as total_cost, SUM(total_tokens) as total_tokens FROM scans WHERE user_id = %s",
-            (user_id,),
-        )
-        totals = c.fetchone()
     finally:
         conn.close()
 
@@ -307,8 +302,6 @@ def get_metrics(user: dict = Depends(get_current_user)):
         return {
             "avg_mttr": "0s", "avg_ttd": "0s", "success_rate": "100%",
             "verification_pass_rate": "N/A",
-            "total_cost": f"${totals.get('total_cost', 0.0) or 0:.4f}",
-            "total_tokens": totals.get("total_tokens", 0) or 0,
             "total_scans": 0,
         }
 
@@ -347,8 +340,6 @@ def get_metrics(user: dict = Depends(get_current_user)):
         "avg_ttd": f"{int(sum(ttd_list) / len(ttd_list) if ttd_list else 0)}s",
         "success_rate": f"{success_pct}%",
         "verification_pass_rate": f"{int(verified_count / completed_count * 100)}%" if completed_count else "N/A",
-        "total_cost": f"${totals.get('total_cost', 0.0) or 0:.4f}",
-        "total_tokens": totals.get("total_tokens", 0) or 0,
         "total_scans": total,
     }
 

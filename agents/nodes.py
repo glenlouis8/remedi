@@ -17,7 +17,11 @@ load_dotenv()
 
 def _get_protected_clause(for_report=False):
     protected_raw = os.environ.get("PROTECTED_IAM_USERS", "").strip()
-    protected_users = [u.strip() for u in protected_raw.split(",") if u.strip()] if protected_raw else []
+    protected_users = (
+        [u.strip() for u in protected_raw.split(",") if u.strip()]
+        if protected_raw
+        else []
+    )
     if not protected_users:
         return ""
     if for_report:
@@ -41,16 +45,31 @@ _all_tools = get_all_tools()
 _tools_by_name = get_tools_by_name()
 
 AUDIT_TOOL_NAMES = {
-    "get_agent_identity", "list_iam_users", "list_attached_user_policies",
-    "list_s3_buckets", "check_s3_security", "audit_s3_buckets", "audit_vpc_network",
-    "audit_security_groups", "audit_ec2_vulnerabilities", "get_resource_owner",
-    "audit_rds_instances", "audit_lambda_permissions", "audit_cloudtrail_logging",
+    "get_agent_identity",
+    "list_iam_users",
+    "list_attached_user_policies",
+    "list_s3_buckets",
+    "check_s3_security",
+    "audit_s3_buckets",
+    "audit_vpc_network",
+    "audit_security_groups",
+    "audit_ec2_vulnerabilities",
+    "get_resource_owner",
+    "audit_rds_instances",
+    "audit_lambda_permissions",
+    "audit_cloudtrail_logging",
 }
 
 REMEDIATION_TOOL_NAMES = {
-    "restrict_iam_user", "remediate_s3", "remediate_vpc_flow_logs",
-    "revoke_security_group_ingress", "enforce_imdsv2", "stop_instance",
-    "remediate_rds_public_access", "remediate_lambda_role", "remediate_cloudtrail",
+    "restrict_iam_user",
+    "remediate_s3",
+    "remediate_vpc_flow_logs",
+    "revoke_security_group_ingress",
+    "enforce_imdsv2",
+    "stop_instance",
+    "remediate_rds_public_access",
+    "remediate_lambda_role",
+    "remediate_cloudtrail",
 }
 
 # 1. READ-ONLY AUDIT TOOLS
@@ -66,19 +85,19 @@ remediation_llm = llm.bind_tools(remediation_tools_list)
 # --- NODES ---
 
 
-
-def _run_sub_agent(service: str, prompt: str, tools: list, protected_clause: str) -> tuple:
+def _run_sub_agent(
+    service: str, prompt: str, tools: list, protected_clause: str
+) -> tuple:
     """
     Runs a single specialist sub-agent synchronously inside a thread.
     Handles its own tool loop and Gemini rate-limit retries.
-    Returns (service_name, findings_text, total_tokens).
+    Returns (service_name, findings_text).
     """
     llm_with_tools = llm.bind_tools(tools)
     messages = [
         SystemMessage(content=prompt + protected_clause),
         HumanMessage(content="Begin your audit now."),
     ]
-    total_tokens = 0
 
     while True:
         for attempt in range(3):
@@ -87,14 +106,14 @@ def _run_sub_agent(service: str, prompt: str, tools: list, protected_clause: str
                 break
             except Exception as e:
                 if "429" in str(e) and attempt < 2:
-                    print(f"[{service}] Rate limited — retrying in 10s ({attempt + 1}/2)...")
+                    print(
+                        f"[{service}] Rate limited — retrying in 10s ({attempt + 1}/2)..."
+                    )
                     time.sleep(10)
                 else:
                     raise
 
         messages.append(response)
-        tokens = (response.usage_metadata or {}).get("total_tokens", 0) if hasattr(response, "usage_metadata") else 0
-        total_tokens += tokens
 
         if not response.tool_calls:
             break
@@ -104,18 +123,36 @@ def _run_sub_agent(service: str, prompt: str, tools: list, protected_clause: str
             if tool:
                 try:
                     result = tool.invoke(tc["args"])
-                    messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"], name=tc["name"]))
+                    messages.append(
+                        ToolMessage(
+                            content=str(result), tool_call_id=tc["id"], name=tc["name"]
+                        )
+                    )
                 except Exception as e:
-                    messages.append(ToolMessage(content=f"Error: {e}", tool_call_id=tc["id"], name=tc["name"]))
+                    messages.append(
+                        ToolMessage(
+                            content=f"Error: {e}",
+                            tool_call_id=tc["id"],
+                            name=tc["name"],
+                        )
+                    )
             else:
-                messages.append(ToolMessage(content=f"Unknown tool: {tc['name']}", tool_call_id=tc["id"], name=tc["name"]))
+                messages.append(
+                    ToolMessage(
+                        content=f"Unknown tool: {tc['name']}",
+                        tool_call_id=tc["id"],
+                        name=tc["name"],
+                    )
+                )
 
     if isinstance(response.content, list):
-        text = " ".join(p.get("text", "") for p in response.content if isinstance(p, dict)).strip()
+        text = " ".join(
+            p.get("text", "") for p in response.content if isinstance(p, dict)
+        ).strip()
     else:
         text = str(response.content)
 
-    return service, text, total_tokens
+    return service, text
 
 
 _OUTPUT_FORMAT = (
@@ -128,7 +165,12 @@ _OUTPUT_FORMAT = (
 _SPECIALIST_CONFIGS = [
     {
         "service": "IAM",
-        "tool_names": {"get_agent_identity", "list_iam_users", "list_attached_user_policies", "get_resource_owner"},
+        "tool_names": {
+            "get_agent_identity",
+            "list_iam_users",
+            "list_attached_user_policies",
+            "get_resource_owner",
+        },
         "prompt": (
             "You are an IAM security specialist. Audit this AWS account's IAM configuration.\n"
             "1. Call `list_iam_users` to get all users.\n"
@@ -143,8 +185,7 @@ _SPECIALIST_CONFIGS = [
         "prompt": (
             "You are an S3 security specialist. Audit this AWS account's S3 buckets.\n"
             "1. Call `audit_s3_buckets` — this lists all buckets and checks each one in a single call.\n"
-            "2. Flag any bucket reported as PUBLIC RISK as CRITICAL."
-            + _OUTPUT_FORMAT
+            "2. Flag any bucket reported as PUBLIC RISK as CRITICAL." + _OUTPUT_FORMAT
         ),
     },
     {
@@ -153,8 +194,7 @@ _SPECIALIST_CONFIGS = [
         "prompt": (
             "You are a VPC network security specialist. Audit this AWS account's VPC configuration.\n"
             "1. Call `audit_vpc_network`.\n"
-            "2. Flag any VPC with flow logs disabled as HIGH severity."
-            + _OUTPUT_FORMAT
+            "2. Flag any VPC with flow logs disabled as HIGH severity." + _OUTPUT_FORMAT
         ),
     },
     {
@@ -237,27 +277,31 @@ def orchestrator_node(state: AgentState):
     ]
 
     _SVC_KEY = {
-        "IAM": "iam", "S3": "s3", "VPC": "vpc", "Security Groups": "sg",
-        "EC2": "ec2", "RDS": "rds", "Lambda": "lambda", "CloudTrail": "cloudtrail",
+        "IAM": "iam",
+        "S3": "s3",
+        "VPC": "vpc",
+        "Security Groups": "sg",
+        "EC2": "ec2",
+        "RDS": "rds",
+        "Lambda": "lambda",
+        "CloudTrail": "cloudtrail",
     }
 
     findings: dict[str, str] = {}
-    total_tokens = 0
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         futures = {executor.submit(_run_sub_agent, *task): task[0] for task in tasks}
         for future in as_completed(futures):
             service = futures[future]
             try:
-                svc, text, tokens = future.result()
+                svc, text = future.result()
                 findings[svc] = text
-                total_tokens += tokens
                 svc_key = _SVC_KEY.get(svc, svc.lower())
 
                 # Parse FINDING lines to emit one [SCAN] event per actual resource
                 finding_pattern = re.compile(
-                    r'FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+)',
-                    re.IGNORECASE
+                    r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+)",
+                    re.IGNORECASE,
                 )
                 parsed_findings = finding_pattern.findall(text)
 
@@ -268,27 +312,59 @@ def orchestrator_node(state: AgentState):
                         if resource_name in seen_resources:
                             continue
                         seen_resources.add(resource_name)
-                        print(f"[SCAN] {json.dumps({'service': svc_key, 'resource': resource_name, 'status': 'vulnerable', 'msg': reason.strip()[:120]})}", flush=True)
+                        print(
+                            f"[SCAN] {json.dumps({'service': svc_key, 'resource': resource_name, 'status': 'vulnerable', 'msg': reason.strip()[:120]})}",
+                            flush=True,
+                        )
                 else:
                     # No findings — emit one clean event for the service
-                    has_issues = any(kw in text.upper() for kw in ["CRITICAL", "HIGH", "VULNERABLE", "VIOLATION", "EXPOSED", "PUBLIC"])
+                    has_issues = any(
+                        kw in text.upper()
+                        for kw in [
+                            "CRITICAL",
+                            "HIGH",
+                            "VULNERABLE",
+                            "VIOLATION",
+                            "EXPOSED",
+                            "PUBLIC",
+                        ]
+                    )
                     status = "vulnerable" if has_issues else "ok"
-                    first_line = next((l.strip() for l in text.split("\n") if l.strip() and len(l.strip()) > 10), "No issues found")
-                    print(f"[SCAN] {json.dumps({'service': svc_key, 'resource': svc, 'status': status, 'msg': first_line[:120]})}", flush=True)
+                    first_line = next(
+                        (
+                            l.strip()
+                            for l in text.split("\n")
+                            if l.strip() and len(l.strip()) > 10
+                        ),
+                        "No issues found",
+                    )
+                    print(
+                        f"[SCAN] {json.dumps({'service': svc_key, 'resource': svc, 'status': status, 'msg': first_line[:120]})}",
+                        flush=True,
+                    )
             except Exception as e:
                 findings[service] = f"{service}: scan failed — {e}"
                 svc_key = _SVC_KEY.get(service, service.lower())
-                print(f"[SCAN] {json.dumps({'service': svc_key, 'resource': service, 'status': 'error', 'msg': str(e)[:120]})}", flush=True)
+                print(
+                    f"[SCAN] {json.dumps({'service': svc_key, 'resource': service, 'status': 'error', 'msg': str(e)[:120]})}",
+                    flush=True,
+                )
 
-    order = ["IAM", "S3", "VPC", "Security Groups", "EC2", "RDS", "Lambda", "CloudTrail"]
+    order = [
+        "IAM",
+        "S3",
+        "VPC",
+        "Security Groups",
+        "EC2",
+        "RDS",
+        "Lambda",
+        "CloudTrail",
+    ]
     combined = "\n\n".join(
         f"=== {svc} ===\n{findings.get(svc, 'No data.')}" for svc in order
     )
 
-    update_scan(scan_id, total_tokens=total_tokens)
-    print(f"[ORCHESTRATOR] All services scanned. Total tokens: {total_tokens}")
-
-    return {"messages": [AIMessage(content=combined)], "total_tokens": total_tokens}
+    return {"messages": [AIMessage(content=combined)]}
 
 
 def report_generator_node(state: AgentState):
@@ -301,7 +377,9 @@ def report_generator_node(state: AgentState):
 
     # TOKEN OPTIMIZATION: The auditor's final message (last in the list) is its text
     # summary — all the intermediate tool call/result pairs before it are noise here.
-    last_auditor_msg = messages[-1] if messages else HumanMessage(content="No audit data.")
+    last_auditor_msg = (
+        messages[-1] if messages else HumanMessage(content="No audit data.")
+    )
 
     protected_clause = _get_protected_clause(for_report=True)
 
@@ -332,8 +410,6 @@ def report_generator_node(state: AgentState):
     # Pass only the auditor's final summary — saves ~80% of tokens vs full history
     response = llm.invoke([last_auditor_msg, summary_prompt])
 
-    # TELEMETRY: Tokens
-    tokens = response.usage_metadata.get("total_tokens", 0) if hasattr(response, "usage_metadata") and response.usage_metadata else 0
     scan_id = state.get("scan_id", "UNKNOWN")
 
     if isinstance(response.content, list):
@@ -343,35 +419,59 @@ def report_generator_node(state: AgentState):
     else:
         clean_content = str(response.content)
     # Count total findings — one per 🔴 line in the plan
-    findings_count = len(re.findall(r'I will call `?\w+`?', clean_content)) or clean_content.count("🔴")
+    findings_count = len(
+        re.findall(r"I will call `?\w+`?", clean_content)
+    ) or clean_content.count("🔴")
 
     # Single update call instead of two — also persist the audit summary for history detail view
-    update_scan(scan_id, findings_count=findings_count, total_tokens=state.get("total_tokens", 0) + tokens, audit_summary=clean_content)
+    update_scan(
+        scan_id,
+        findings_count=findings_count,
+        audit_summary=clean_content,
+    )
 
     # Update CIS compliance checks based on scan findings
     _SERVICE_TO_CIS = {
-        "IAM":             "check_iam",
-        "S3":              "check_s3",
-        "VPC":             "check_vpc",
+        "IAM": "check_iam",
+        "S3": "check_s3",
+        "VPC": "check_vpc",
         "Security Groups": "check_ssh",
-        "EC2":             "check_ec2",
-        "RDS":             "check_rds",
-        "Lambda":          "check_lambda",
-        "CloudTrail":      "check_cloudtrail",
+        "EC2": "check_ec2",
+        "RDS": "check_rds",
+        "Lambda": "check_lambda",
+        "CloudTrail": "check_cloudtrail",
     }
-    audit_combined = str(last_auditor_msg.content) if hasattr(last_auditor_msg, "content") else ""
+    audit_combined = (
+        str(last_auditor_msg.content) if hasattr(last_auditor_msg, "content") else ""
+    )
     for svc, check_id in _SERVICE_TO_CIS.items():
         section_start = audit_combined.find(f"=== {svc} ===")
         if section_start == -1:
             continue
         section_end = audit_combined.find("===", section_start + len(f"=== {svc} ==="))
-        section = audit_combined[section_start:section_end if section_end != -1 else None].upper()
-        has_issues = any(kw in section for kw in ["CRITICAL", "HIGH", "FINDING:", "VULNERABLE", "EXPOSED", "PUBLIC"])
+        section = audit_combined[
+            section_start : section_end if section_end != -1 else None
+        ].upper()
+        has_issues = any(
+            kw in section
+            for kw in [
+                "CRITICAL",
+                "HIGH",
+                "FINDING:",
+                "VULNERABLE",
+                "EXPOSED",
+                "PUBLIC",
+            ]
+        )
         update_status(check_id, "VULNERABLE" if has_issues else "SAFE")
 
     print("[CIS_READY]", flush=True)
     print(f"[DEBUG] Generated Report: {clean_content}")
-    return {"audit_summary": clean_content, "messages": [response], "total_tokens": tokens, "findings_count": findings_count}
+    return {
+        "audit_summary": clean_content,
+        "messages": [response],
+        "findings_count": findings_count,
+    }
 
 
 def safety_gate_node(state: AgentState):
@@ -380,9 +480,11 @@ def safety_gate_node(state: AgentState):
     Checks if the system is secure. If so, skips the scary 'PAUSE' message.
     """
     summary = state.get("audit_summary", "No summary")
-    
+
     summary_str = str(summary)
-    update_scan(state.get("scan_id", "UNKNOWN"), gate_time=datetime.datetime.now().isoformat())
+    update_scan(
+        state.get("scan_id", "UNKNOWN"), gate_time=datetime.datetime.now().isoformat()
+    )
 
     # Check for the magic "SYSTEM SECURE" string from the Report Generator
     if "SYSTEM SECURE" in summary_str:
@@ -391,7 +493,9 @@ def safety_gate_node(state: AgentState):
         return {}
 
     print(f"\n>>> AUDIT COMPLETE. FINDINGS: \n{summary_str}\n")
-    print(">>> PAUSING FOR HUMAN REVIEW. (Remediation will strictly NOT proceed without approval).")
+    print(
+        ">>> PAUSING FOR HUMAN REVIEW. (Remediation will strictly NOT proceed without approval)."
+    )
     print("[ACTION_REQUIRED] WAITING_FOR_APPROVAL", flush=True)
     return {}
 
@@ -418,7 +522,8 @@ def remediator_agent(state: AgentState):
     # 2. DISPATCH TABLE: Map string names to MCP tool objects
     # Tool calls are routed through the MCP protocol to the server subprocess.
     FUNCTION_DISPATCH = {
-        name: tool for name, tool in _tools_by_name.items()
+        name: tool
+        for name, tool in _tools_by_name.items()
         if name in REMEDIATION_TOOL_NAMES
     }
 
@@ -448,15 +553,15 @@ def remediator_agent(state: AgentState):
     # 4. TOOL → ARGUMENT KEY MAP
     # Maps each tool name to the arg name its resource goes into
     TOOL_ARG_MAP = {
-        "restrict_iam_user":           "user_name",
-        "remediate_s3":                "bucket_name",
-        "remediate_vpc_flow_logs":     "vpc_id",
+        "restrict_iam_user": "user_name",
+        "remediate_s3": "bucket_name",
+        "remediate_vpc_flow_logs": "vpc_id",
         "revoke_security_group_ingress": "group_id",
-        "enforce_imdsv2":              "instance_id",
-        "stop_instance":               "instance_id",
+        "enforce_imdsv2": "instance_id",
+        "stop_instance": "instance_id",
         "remediate_rds_public_access": "db_instance_identifier",
-        "remediate_lambda_role":       "function_name",
-        "remediate_cloudtrail":        "trail_name",
+        "remediate_lambda_role": "function_name",
+        "remediate_cloudtrail": "trail_name",
     }
 
     scan_id = state.get("scan_id", "UNKNOWN")
@@ -464,6 +569,7 @@ def remediator_agent(state: AgentState):
     try:
         # 5. REGEX PARSE — no LLM call, no JSON, no latency
         import re
+
         pattern = re.compile(
             r'🔴 \[CRITICAL\] (.+?) is vulnerable -> ACTION: I will call [`\'"]?(\w+)[`\'"]?'
         )
@@ -471,15 +577,17 @@ def remediator_agent(state: AgentState):
 
         tasks = []
         for match in pattern.finditer(summary):
-            resource  = match.group(1).strip()
+            resource = match.group(1).strip()
             tool_name = match.group(2).strip()
             real_name = INTENT_MAP.get(tool_name, tool_name)
-            func      = FUNCTION_DISPATCH.get(real_name)
-            arg_key   = TOOL_ARG_MAP.get(real_name)
+            func = FUNCTION_DISPATCH.get(real_name)
+            arg_key = TOOL_ARG_MAP.get(real_name)
             if approved_resources is not None and resource not in approved_resources:
                 print(f"[SKIP] {resource} not in approved list — skipping.")
                 continue
-            tasks.append((resource, real_name, func, {arg_key: resource} if arg_key else {}))
+            tasks.append(
+                (resource, real_name, func, {arg_key: resource} if arg_key else {})
+            )
 
         print(f"[DEBUG] Parsed {len(tasks)} tasks. Starting parallel execution...")
 
@@ -487,7 +595,14 @@ def remediator_agent(state: AgentState):
         def _run_task(resource, real_name, func, args):
             start_time = datetime.datetime.now()
             if func is None:
-                return resource, real_name, args, f"⚠️ Unknown tool: {real_name}", "UNKNOWN_TOOL", 0.0
+                return (
+                    resource,
+                    real_name,
+                    args,
+                    f"⚠️ Unknown tool: {real_name}",
+                    "UNKNOWN_TOOL",
+                    0.0,
+                )
             if "security_group_id" in args:
                 args["group_id"] = args.pop("security_group_id")
             valid_args = {k: v for k, v in args.items() if k in func.args}
@@ -495,10 +610,24 @@ def remediator_agent(state: AgentState):
             try:
                 result_str = func.invoke(valid_args)
                 duration = (datetime.datetime.now() - start_time).total_seconds()
-                return resource, real_name, args, f"✅ {result_str}", "SUCCESS", duration
+                return (
+                    resource,
+                    real_name,
+                    args,
+                    f"✅ {result_str}",
+                    "SUCCESS",
+                    duration,
+                )
             except Exception as e:
                 duration = (datetime.datetime.now() - start_time).total_seconds()
-                return resource, real_name, args, f"❌ {real_name}: {str(e)}", "ERROR", duration
+                return (
+                    resource,
+                    real_name,
+                    args,
+                    f"❌ {real_name}: {str(e)}",
+                    "ERROR",
+                    duration,
+                )
 
         results = []
         success_count = 0
@@ -511,17 +640,21 @@ def remediator_agent(state: AgentState):
                 if status == "SUCCESS":
                     success_count += 1
                 resource_id = (
-                    args.get("user_name") or args.get("bucket_name") or
-                    args.get("instance_id") or args.get("vpc_id") or
-                    args.get("group_id") or args.get("db_instance_identifier") or
-                    args.get("function_name") or resource
+                    args.get("user_name")
+                    or args.get("bucket_name")
+                    or args.get("instance_id")
+                    or args.get("vpc_id")
+                    or args.get("group_id")
+                    or args.get("db_instance_identifier")
+                    or args.get("function_name")
+                    or resource
                 )
                 log_remediation(scan_id, resource_id, real_name, status, duration)
 
         # 7. REPORTING
         update_scan(scan_id, remediations_count=success_count)
         full_summary = "### 🛠️ REMEDIATION REPORT\n" + "\n".join(results)
-        return {"messages": [AIMessage(content=full_summary)], "total_tokens": 0}
+        return {"messages": [AIMessage(content=full_summary)]}
 
     except Exception as e:
         print(f"[ERROR] Remediation failure: {e}")
@@ -563,9 +696,12 @@ def verifier_agent(state: AgentState):
     # previous verification iterations). Without this, Claude never sees its own
     # tool results and loops forever calling the same tools repeatedly.
     report_idx = next(
-        (len(messages) - 1 - i for i, m in enumerate(reversed(messages))
-         if isinstance(m, AIMessage) and "REMEDIATION REPORT" in str(m.content)),
-        None
+        (
+            len(messages) - 1 - i
+            for i, m in enumerate(reversed(messages))
+            if isinstance(m, AIMessage) and "REMEDIATION REPORT" in str(m.content)
+        ),
+        None,
     )
 
     # If the remediator failed, there's nothing to verify — exit immediately
@@ -573,58 +709,57 @@ def verifier_agent(state: AgentState):
         scan_id = state.get("scan_id", "UNKNOWN")
         end_time = datetime.datetime.now().isoformat()
         update_scan(scan_id, status="FAILED", end_time=end_time)
-        return {"messages": [AIMessage(content="VERIFICATION SKIPPED: Remediator failed — no fixes were applied.")]}
+        return {
+            "messages": [
+                AIMessage(
+                    content="VERIFICATION SKIPPED: Remediator failed — no fixes were applied."
+                )
+            ]
+        }
 
     context = messages[report_idx:]
     response = audit_llm.invoke([system_msg] + context)
-    
-    # TELEMETRY: Tokens
-    tokens = response.usage_metadata.get("total_tokens", 0) if hasattr(response, "usage_metadata") and response.usage_metadata else 0
+
     scan_id = state.get("scan_id", "UNKNOWN")
-    
+
     verified = "MISSION ACCOMPLISHED" in str(response.content)
     status = "COMPLETED" if verified else "FAILED"
     end_time = datetime.datetime.now().isoformat()
 
-    # Cost estimate: Gemini Flash (~$0.15/1M input, $0.60/1M output)
-    # Using $0.0000015 per token as a conservative blended rate
-    total_tokens_so_far = state.get("total_tokens", 0) + tokens
-    cost = total_tokens_so_far * 0.0000015
-
-    update_scan(scan_id,
-                total_tokens=total_tokens_so_far,
-                status=status,
-                end_time=end_time,
-                estimated_cost=cost,
-                verified=verified)
+    update_scan(
+        scan_id,
+        status=status,
+        end_time=end_time,
+        verified=verified,
+    )
 
     # Update compliance checks — mark remediated services as SAFE now that fixes are verified
     if verified:
         _TOOL_TO_CIS = {
-            "restrict_iam_user":             "check_iam",
-            "remediate_s3":                  "check_s3",
-            "remediate_vpc_flow_logs":        "check_vpc",
-            "revoke_security_group_ingress":  "check_ssh",
-            "enforce_imdsv2":                 "check_ec2",
-            "stop_instance":                  "check_ec2",
-            "remediate_rds_public_access":    "check_rds",
-            "remediate_lambda_role":          "check_lambda",
-            "remediate_cloudtrail":           "check_cloudtrail",
+            "restrict_iam_user": "check_iam",
+            "remediate_s3": "check_s3",
+            "remediate_vpc_flow_logs": "check_vpc",
+            "revoke_security_group_ingress": "check_ssh",
+            "enforce_imdsv2": "check_ec2",
+            "stop_instance": "check_ec2",
+            "remediate_rds_public_access": "check_rds",
+            "remediate_lambda_role": "check_lambda",
+            "remediate_cloudtrail": "check_cloudtrail",
         }
         _INTENT_TO_TOOL = {
-            "enable_vpc_flow_logs":          "remediate_vpc_flow_logs",
-            "remediate_security_group":      "revoke_security_group_ingress",
-            "stop_ec2_instance":             "stop_instance",
+            "enable_vpc_flow_logs": "remediate_vpc_flow_logs",
+            "remediate_security_group": "revoke_security_group_ingress",
+            "stop_ec2_instance": "stop_instance",
             "remediate_ec2_vulnerabilities": "stop_instance",
-            "set_s3_bucket_private":         "remediate_s3",
-            "remediate_s3_bucket":           "remediate_s3",
-            "remediate_s3_public_access":    "remediate_s3",
-            "disable_rds_public_access":     "remediate_rds_public_access",
-            "remediate_rds":                 "remediate_rds_public_access",
-            "fix_lambda_permissions":        "remediate_lambda_role",
-            "remediate_lambda":              "remediate_lambda_role",
-            "enable_cloudtrail":             "remediate_cloudtrail",
-            "fix_cloudtrail":               "remediate_cloudtrail",
+            "set_s3_bucket_private": "remediate_s3",
+            "remediate_s3_bucket": "remediate_s3",
+            "remediate_s3_public_access": "remediate_s3",
+            "disable_rds_public_access": "remediate_rds_public_access",
+            "remediate_rds": "remediate_rds_public_access",
+            "fix_lambda_permissions": "remediate_lambda_role",
+            "remediate_lambda": "remediate_lambda_role",
+            "enable_cloudtrail": "remediate_cloudtrail",
+            "fix_cloudtrail": "remediate_cloudtrail",
         }
         summary = state.get("audit_summary", "")
         call_pattern = re.compile(r'I will call [`\'"]?(\w+)[`\'"]?')
@@ -636,4 +771,4 @@ def verifier_agent(state: AgentState):
                 update_status(check_id, "SAFE")
                 updated.add(check_id)
 
-    return {"messages": [response], "total_tokens": tokens}
+    return {"messages": [response]}

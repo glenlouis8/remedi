@@ -27,5 +27,4 @@ class AgentState(TypedDict):
 
     # 4. Metrics Tracking
     scan_id: str
-    total_tokens: Annotated[int, operator.add]
     findings_count: int

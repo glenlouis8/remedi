@@ -124,8 +124,6 @@ def init_db():
             end_time TIMESTAMP,
             findings_count INTEGER DEFAULT 0,
             remediations_count INTEGER DEFAULT 0,
-            total_tokens INTEGER DEFAULT 0,
-            estimated_cost REAL DEFAULT 0.0,
             status TEXT
         )
     ''')
@@ -344,7 +342,7 @@ def get_scan_detail(scan_id: str):
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
             SELECT id, start_time, end_time, findings_count, remediations_count,
-                   status, verified, estimated_cost, total_tokens, audit_summary
+                   status, verified, audit_summary
             FROM scans WHERE id = %s
         """, (scan_id,))
         scan = dict(cur.fetchone() or {})
