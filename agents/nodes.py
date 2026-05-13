@@ -175,7 +175,8 @@ _SPECIALIST_CONFIGS = [
             "You are an IAM security specialist. Audit this AWS account's IAM configuration.\n"
             "1. Call `list_iam_users` to get all users.\n"
             "2. Call `list_attached_user_policies` for EVERY user found.\n"
-            "3. Flag any user with AdministratorAccess or PowerUserAccess as CRITICAL."
+            "3. Flag any user with AdministratorAccess or PowerUserAccess as CRITICAL.\n"
+            "4. Do NOT flag any user whose name contains 'admin' (case-insensitive) — these are known admin accounts."
             + _OUTPUT_FORMAT
         ),
     },
@@ -398,11 +399,18 @@ def report_generator_node(state: AgentState):
             "- RDS instance that is publicly accessible → `remediate_rds_public_access`\n"
             "- Lambda with over-permissioned execution role → `remediate_lambda_role`\n"
             "- CloudTrail logging disabled → `remediate_cloudtrail`\n\n"
-            "Output one line per finding in exactly this format:\n"
-            "🔴 [CRITICAL] <resource name> is vulnerable -> ACTION: I will call `<tool name>`.\n\n"
+            "Output one line per finding in exactly this format — severity must match the audit finding:\n"
+            "🔴 [CRITICAL] <resource name> is vulnerable -> ACTION: I will call `<tool name>`.\n"
+            "🔴 [HIGH] <resource name> is vulnerable -> ACTION: I will call `<tool name>`.\n\n"
+            "Rules:\n"
+            "- Use [CRITICAL] only if the audit marked it CRITICAL. Use [HIGH] if the audit marked it HIGH.\n"
+            "- One line per finding. If the same resource has two separate issues, output two lines.\n"
+            "- Do NOT merge multiple findings for the same resource into one line.\n"
+            "- Do NOT change the resource name — copy it exactly from the audit output.\n"
+            "- Do NOT invent findings. Only include resources actually flagged in the audit.\n"
+            "- Do NOT output any explanation, preamble, or summary — only the 🔴 lines.\n\n"
             "If a finding has no matching tool above, output:\n"
-            "⚠️ [MANUAL] <resource name> requires manual review — <reason>.\n\n"
-            "Do not invent findings. Only include resources that were actually flagged in the audit."
+            "⚠️ [MANUAL] <resource name> requires manual review — <reason>."
             + protected_clause
         )
     )
@@ -571,7 +579,7 @@ def remediator_agent(state: AgentState):
         import re
 
         pattern = re.compile(
-            r'🔴 \[CRITICAL\] (.+?) is vulnerable -> ACTION: I will call [`\'"]?(\w+)[`\'"]?'
+            r'🔴 \[(?:CRITICAL|HIGH)\] (.+?) is vulnerable -> ACTION: I will call [`\'"]?(\w+)[`\'"]?'
         )
         approved_resources = state.get("approved_resources")  # None = all approved
 
