@@ -75,6 +75,8 @@ orchestrator → report_generator → safety_gate ─[your approval]─► remed
 - **Parallelism model** — the orchestrator fires all 8 specialist agents simultaneously via `ThreadPoolExecutor`. Tool calls within a single agent are sequential (the MCP pipe is single-threaded). The remediator also parallelizes — all approved fixes run concurrently.
 - **No LLM parse step in remediation** — the remediator regex-parses the report directly (`🔴 [CRITICAL] <resource> is vulnerable -> ACTION: I will call \`tool_name\``). No extra LLM call, no JSON, no latency.
 - **Token optimization** — the report generator receives only the auditor's final summary, not the full tool call history. Saves ~80% of tokens vs passing the entire message chain.
+- **Finding accumulation** — FINDING lines are collected across every LLM turn in the specialist loop, not just the final message. Prevents overcorrection where the protected-user clause caused the LLM to drop real findings from its summary.
+- **Langfuse tracing** — every scan is a Langfuse trace. Each specialist sub-agent, report generation, and remediation step appears as a span with token counts and latency.
 
 ---
 
@@ -82,7 +84,8 @@ orchestrator → report_generator → safety_gate ─[your approval]─► remed
 
 **Backend:** Python · FastAPI · LangGraph · Google Gemini · MCP · PostgreSQL · Clerk  
 **Frontend:** Next.js 15 · TypeScript · Tailwind CSS · Clerk  
-**Infrastructure:** Railway · CloudFormation · Terraform (test env)
+**Observability:** Langfuse — traces every LLM call, tool call, and latency across the full agent pipeline  
+**Infrastructure:** Render · Vercel · Supabase · CloudFormation · Terraform (test env)
 
 ---
 
@@ -187,4 +190,4 @@ uv add pytest "moto[s3,iam,ec2,rds,cloudtrail,logs]" httpx --dev
 
 ## Deployment
 
-Deployed on Railway. The backend (`uvicorn server:app`) and frontend (Next.js) run as separate Railway services. `railway.toml` sets the start command. `frontend/Dockerfile` handles the containerized frontend build.
+Backend deployed on Render (`uvicorn server:app --host 0.0.0.0 --port $PORT`). Frontend deployed on Vercel. Database on Supabase (PostgreSQL, Session Pooler connection string for IPv4 compatibility). `frontend/Dockerfile` handles containerized frontend builds if needed.
