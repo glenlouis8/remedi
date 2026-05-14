@@ -354,6 +354,15 @@ export default function Dashboard() {
             continue;
           }
 
+          if (raw.includes('[SCAN_CLEAR]')) {
+            // Report generator found nothing to remediate — clear all vulnerable badges
+            for (const svc of Object.keys(localItems) as ServiceKey[]) {
+              localItems[svc] = localItems[svc]!.map(i => i.status === 'vulnerable' ? { ...i, status: 'ok' as const } : i);
+            }
+            setScanItems({ ...localItems });
+            continue;
+          }
+
           if (raw.includes('[ACTION_REQUIRED] WAITING_FOR_APPROVAL')) {
             setActiveService(null);
             setScanState('awaiting_approval');

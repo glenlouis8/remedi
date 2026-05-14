@@ -1,9 +1,26 @@
 import sys
 import uuid
+import os
+from dotenv import load_dotenv
+load_dotenv()
 from agents.graph import app
 import datetime
 from mcp_server.database import update_scan
 from langchain_core.messages import HumanMessage, AIMessage
+
+def _make_langfuse_handler(scan_id: str):
+    try:
+        from langfuse.callback import CallbackHandler
+        return CallbackHandler(
+            public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
+            secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
+            host=os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+            session_id=scan_id,
+            user_id=os.environ.get("REMEDI_USER_ID"),
+            tags=["remedi", os.environ.get("REMEDI_ACCOUNT_NAME", "Default")],
+        )
+    except Exception:
+        return None
 
 
 def run_interactive_session():
@@ -19,7 +36,9 @@ def run_interactive_session():
     scan_id = f"SCAN-{uuid.uuid4().hex[:8].upper()}"
 
     # recursion_limit caps tool-call loops so a misbehaving agent can't run forever
-    config = {"configurable": {"thread_id": scan_id}, "recursion_limit": 25}
+    langfuse_handler = _make_langfuse_handler(scan_id)
+    callbacks = [langfuse_handler] if langfuse_handler else []
+    config = {"configurable": {"thread_id": scan_id}, "recursion_limit": 25, "callbacks": callbacks}
 
     # 2. Initial Input
     print(f"\n[SYSTEM] Initializing Audit Scan: {scan_id}")
@@ -161,6 +180,9 @@ def run_interactive_session():
     print("\n=======================================================")
     print("🏁 AEGIS-FLOW WORKFLOW COMPLETE")
     print("=======================================================")
+
+    if langfuse_handler:
+        langfuse_handler.flush()
 
 
 if __name__ == "__main__":

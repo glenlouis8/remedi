@@ -98,6 +98,11 @@ def _run_sub_agent(
         SystemMessage(content=prompt + protected_clause),
         HumanMessage(content="Begin your audit now."),
     ]
+    finding_pattern = re.compile(
+        r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+)",
+        re.IGNORECASE,
+    )
+    accumulated_findings: list[str] = []
 
     while True:
         for attempt in range(3):
@@ -114,6 +119,17 @@ def _run_sub_agent(
                     raise
 
         messages.append(response)
+
+        # Collect FINDING lines from every LLM response, not just the last
+        if isinstance(response.content, list):
+            msg_text = " ".join(
+                p.get("text", "") for p in response.content if isinstance(p, dict)
+            ).strip()
+        else:
+            msg_text = str(response.content)
+
+        for match in finding_pattern.finditer(msg_text):
+            accumulated_findings.append(match.group(0))
 
         if not response.tool_calls:
             break
@@ -146,11 +162,18 @@ def _run_sub_agent(
                 )
 
     if isinstance(response.content, list):
-        text = " ".join(
+        final_text = " ".join(
             p.get("text", "") for p in response.content if isinstance(p, dict)
         ).strip()
     else:
-        text = str(response.content)
+        final_text = str(response.content)
+
+    # If the final message dropped findings (LLM overcorrected due to protected clause),
+    # reconstruct from all accumulated FINDING lines so the report generator sees them.
+    if accumulated_findings and not finding_pattern.search(final_text):
+        text = "\n".join(accumulated_findings)
+    else:
+        text = final_text
 
     return service, text
 
@@ -176,7 +199,7 @@ _SPECIALIST_CONFIGS = [
             "1. Call `list_iam_users` to get all users.\n"
             "2. Call `list_attached_user_policies` for EVERY user found.\n"
             "3. Flag any user with AdministratorAccess or PowerUserAccess as CRITICAL.\n"
-            "4. Do NOT flag any user whose name contains 'admin' (case-insensitive) — these are known admin accounts."
+            "4. Do NOT skip users based on their name — check every user without exception."
             + _OUTPUT_FORMAT
         ),
     },
@@ -313,8 +336,9 @@ def orchestrator_node(state: AgentState):
                         if resource_name in seen_resources:
                             continue
                         seen_resources.add(resource_name)
+                        scan_status = "vulnerable" if severity.upper() in ("CRITICAL", "HIGH") else "ok"
                         print(
-                            f"[SCAN] {json.dumps({'service': svc_key, 'resource': resource_name, 'status': 'vulnerable', 'msg': reason.strip()[:120]})}",
+                            f"[SCAN] {json.dumps({'service': svc_key, 'resource': resource_name, 'status': scan_status, 'msg': reason.strip()[:120]})}",
                             flush=True,
                         )
                 else:
@@ -474,6 +498,8 @@ def report_generator_node(state: AgentState):
         update_status(check_id, "VULNERABLE" if has_issues else "SAFE")
 
     print("[CIS_READY]", flush=True)
+    if "SYSTEM SECURE" in clean_content:
+        print("[SCAN_CLEAR]", flush=True)
     print(f"[DEBUG] Generated Report: {clean_content}")
     return {
         "audit_summary": clean_content,
