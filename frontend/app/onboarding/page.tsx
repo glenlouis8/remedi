@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@clerk/nextjs';
 import { ShieldCheck, Eye, EyeOff, ExternalLink, AlertTriangle, Lock, Upload, CheckCircle, ArrowLeft } from 'lucide-react';
@@ -32,6 +32,17 @@ export default function OnboardingPage() {
   const [error, setError] = useState('');
   const [csvParsed, setCsvParsed] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [hasExistingAccount, setHasExistingAccount] = useState(false);
+
+  useEffect(() => {
+    getToken().then(token => {
+      if (!token) return;
+      fetch(`${API}/api/accounts/status`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json())
+        .then(data => { if (data.connected) setHasExistingAccount(true); })
+        .catch(() => {});
+    });
+  }, [getToken]);
 
   function handleFile(file: File) {
     setError('');
@@ -90,9 +101,11 @@ export default function OnboardingPage() {
           </div>
           <span className="font-semibold tracking-tight text-white">Remedi</span>
         </Link>
-        <Link href="/dashboard" className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors">
-          <ArrowLeft size={13} /> Back to dashboard
-        </Link>
+        {hasExistingAccount && (
+          <Link href="/dashboard" className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors">
+            <ArrowLeft size={13} /> Back to dashboard
+          </Link>
+        )}
       </header>
 
       {/* Two-column layout */}

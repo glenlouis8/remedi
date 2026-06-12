@@ -84,7 +84,7 @@ export default function HomePage() {
           </div>
           <div className="flex items-center gap-6">
             <Link href="/about" className="text-sm text-slate-400 hover:text-white transition-colors">About</Link>
-            <Link href="/developer" className="text-sm text-slate-400 hover:text-white transition-colors">Developer</Link>
+            <Link href="/developer" className="text-sm text-slate-400 hover:text-white transition-colors">Built by</Link>
             {isSignedIn ? (
               <>
                 <Link href="/dashboard" className="text-sm bg-violet-500 hover:bg-violet-400 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
@@ -251,7 +251,7 @@ export default function HomePage() {
           </div>
           <span>© {new Date().getFullYear()} — AWS credentials encrypted at rest, deleted on sign out, auto-expire after 30 min of inactivity</span>
           <Link href="/about" className="hover:text-slate-400 transition-colors">About</Link>
-          <Link href="/developer" className="hover:text-slate-400 transition-colors">Developer</Link>
+          <Link href="/developer" className="hover:text-slate-400 transition-colors">Built by</Link>
         </footer>
       </div>
     </>

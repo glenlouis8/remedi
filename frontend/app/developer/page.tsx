@@ -22,7 +22,7 @@ export default function DeveloperPage() {
         </Link>
         <div className="flex items-center gap-6">
           <Link href="/about" className="text-sm text-slate-400 hover:text-white transition-colors">About</Link>
-          <Link href="/developer" className="text-sm text-violet-400 font-medium">Developer</Link>
+          <Link href="/developer" className="text-sm text-violet-400 font-medium">Built by</Link>
           {isSignedIn ? (
             <>
               <Link href="/dashboard" className="text-sm bg-violet-500 hover:bg-violet-400 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
