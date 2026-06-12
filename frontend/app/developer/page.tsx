@@ -54,13 +54,13 @@ export default function DeveloperPage() {
             </div>
             <div>
               <h1 className="text-xl font-semibold text-white">Glen Louis</h1>
-              <p className="text-sm text-slate-500 mt-0.5">Software Engineer</p>
+              <p className="text-sm text-slate-500 mt-0.5">AI Engineer</p>
             </div>
           </div>
 
           {/* Bio */}
           <p className="text-slate-400 leading-relaxed">
-            I&apos;m a software engineer with a focus on backend systems and AI engineering. I built Remedi as a
+            I&apos;m an AI engineer focused on building production-grade AI systems. I built Remedi as a
             demonstration of what a production-grade AI agent looks like end-to-end — from LangGraph orchestration
             and MCP tooling to a real-time streaming frontend. If you have questions about the project or just want
             to connect, feel free to reach out.
