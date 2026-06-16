@@ -21,6 +21,44 @@ services:
         sync: false
       - key: AWS_DEFAULT_REGION
         sync: false
+      - key: REDIS_URL
+        fromService:
+          name: remedi-redis
+          type: redis
+          property: connectionString
+
+  - type: worker
+    name: remedi-worker
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A worker worker --loglevel=info --concurrency=2
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: AWS_DEFAULT_REGION
+        sync: false
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
+      - key: LANGFUSE_HOST
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          name: remedi-redis
+          type: redis
+          property: connectionString
+
+  - type: redis
+    name: remedi-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
 
   - type: web
     name: remedi-frontend
