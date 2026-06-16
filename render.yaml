@@ -59,6 +59,7 @@ services:
     name: remedi-redis
     plan: free
     maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
 
   - type: web
     name: remedi-frontend
