@@ -174,6 +174,7 @@ export default function Dashboard() {
   const [confirmDelete, setConfirmDelete]   = useState(false);
   const [scansRemaining, setScansRemaining] = useState<number | null>(null);
   const [scanError, setScanError]           = useState<string | null>(null);
+  const [currentScanId, setCurrentScanId]   = useState<string | null>(null);
   const [dropdownOpen, setDropdownOpen]     = useState(false);
   const [iamPickerOpen, setIamPickerOpen]   = useState(false);
   const [iamLoading, setIamLoading]         = useState(false);
@@ -363,6 +364,9 @@ export default function Dashboard() {
             continue;
           }
 
+          const scanIdMatch = raw.match(/Initializing Audit Scan: (SCAN-[A-Z0-9]+)/);
+          if (scanIdMatch) setCurrentScanId(scanIdMatch[1]);
+
           if (raw.includes('[ACTION_REQUIRED] WAITING_FOR_APPROVAL')) {
             setActiveService(null);
             setScanState('awaiting_approval');
@@ -491,7 +495,7 @@ export default function Dashboard() {
     await fetch(`${API}/api/approve`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approved_resources: approved }),
+      body: JSON.stringify({ scan_id: currentScanId, approved_resources: approved }),
     });
   };
 
