@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import signal
@@ -46,6 +47,19 @@ r_pubsub = redis_lib.Redis.from_url(
     socket_keepalive=True,
     health_check_interval=30,
 )
+
+def _cache_get(key: str):
+    try:
+        val = r.get(key)
+        return json.loads(val) if val else None
+    except Exception:
+        return None
+
+def _cache_set(key: str, data, ttl: int = 30):
+    try:
+        r.set(key, json.dumps(data, default=str), ex=ttl)
+    except Exception:
+        pass
 
 # --- DB INIT ---
 max_retries = 30
@@ -230,12 +244,22 @@ def get_protected_users_route(account_name: str = "Default", user: dict = Depend
 
 @app.get("/api/compliance")
 def compliance_score(user: dict = Depends(get_current_user)):
-    return get_cis_score()
+    cached = _cache_get("cache:compliance")
+    if cached is not None:
+        return cached
+    data = get_cis_score()
+    _cache_set("cache:compliance", data, ttl=60)
+    return data
 
 
 @app.get("/api/status")
 def get_status(user: dict = Depends(get_current_user)):
-    return JSONResponse(content=get_all_status())
+    cached = _cache_get("cache:status")
+    if cached is not None:
+        return JSONResponse(content=cached)
+    data = get_all_status()
+    _cache_set("cache:status", data, ttl=60)
+    return JSONResponse(content=data)
 
 
 @app.get("/api/metrics")
@@ -244,6 +268,11 @@ def get_metrics(user: dict = Depends(get_current_user)):
     import psycopg2.extras
 
     user_id = user["sub"]
+    cache_key = f"cache:{user_id}:metrics"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     conn = get_connection()
     try:
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -256,11 +285,13 @@ def get_metrics(user: dict = Depends(get_current_user)):
         conn.close()
 
     if not scans:
-        return {
+        data = {
             "avg_mttr": "0s", "avg_ttd": "0s", "success_rate": "100%",
             "verification_pass_rate": "N/A",
             "total_scans": 0,
         }
+        _cache_set(cache_key, data, ttl=30)
+        return data
 
     durations, ttd_list = [], []
     verified_count = completed_count = aborted_count = 0
@@ -292,18 +323,27 @@ def get_metrics(user: dict = Depends(get_current_user)):
     total = len(scans)
     success_pct = int(completed_count / total * 100) if total else 100
 
-    return {
+    data = {
         "avg_mttr": f"{int(sum(durations) / len(durations) if durations else 0)}s",
         "avg_ttd": f"{int(sum(ttd_list) / len(ttd_list) if ttd_list else 0)}s",
         "success_rate": f"{success_pct}%",
         "verification_pass_rate": f"{int(verified_count / completed_count * 100)}%" if completed_count else "N/A",
         "total_scans": total,
     }
+    _cache_set(cache_key, data, ttl=30)
+    return data
 
 
 @app.get("/api/metrics/history")
 def get_history(user: dict = Depends(get_current_user)):
-    return get_scan_history(user_id=user["sub"])
+    user_id = user["sub"]
+    cache_key = f"cache:{user_id}:history"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+    data = get_scan_history(user_id=user_id)
+    _cache_set(cache_key, data, ttl=30)
+    return data
 
 
 @app.get("/api/metrics/history/{scan_id}")
@@ -316,7 +356,12 @@ def get_scan_detail_endpoint(scan_id: str, user: dict = Depends(get_current_user
 
 @app.get("/api/metrics/breakdown")
 def get_breakdown(user: dict = Depends(get_current_user)):
-    return get_remediation_breakdown()
+    cached = _cache_get("cache:breakdown")
+    if cached is not None:
+        return cached
+    data = get_remediation_breakdown()
+    _cache_set("cache:breakdown", data, ttl=60)
+    return data
 
 
 MAX_CONCURRENT_SCANS = 3

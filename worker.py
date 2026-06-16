@@ -60,5 +60,10 @@ def run_scan_task(self, scan_id: str, user_id: str, env: dict):
 
     process.wait()
     r.set(f"scan:{scan_id}:status", "done", ex=7200)
+
+    # Bust cached metrics/history so dashboard shows fresh data after scan
+    r.delete(f"cache:{user_id}:metrics", f"cache:{user_id}:history")
+    r.delete("cache:status", "cache:compliance", "cache:breakdown")
+
     # Signal stream consumers that output is finished
     r.publish(f"scan:{scan_id}:output", "__DONE__")
