@@ -657,7 +657,7 @@ export default function Dashboard() {
 
       {/* ── Top nav ─────────────────────────────────────────────────────────── */}
       <header className="shrink-0 border-b border-white/6" style={{ background: '#09090b' }}>
-        <div className="flex items-center justify-between px-6 h-14 gap-4">
+        <div className="flex items-center justify-between px-3 sm:px-6 h-14 gap-2 sm:gap-4">
 
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 shrink-0">
@@ -676,13 +676,13 @@ export default function Dashboard() {
               { key: 'settings',  label: 'Settings',  Icon: Lock            },
             ] as const).map(({ key, label, Icon }) => (
               <button key={key} onClick={() => setView(key)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                className={`flex items-center gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors ${
                   view === key
                     ? 'bg-violet-500/10 text-violet-400 font-medium'
                     : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
                 }`}>
                 <Icon size={14} />
-                {label}
+                <span className="hidden sm:inline">{label}</span>
               </button>
             ))}
           </nav>
@@ -712,14 +712,14 @@ export default function Dashboard() {
                 className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 ${
                   selectedAccount === a.account_name
                     ? 'bg-violet-500/10 border-violet-500/30 text-violet-400'
-                    : 'border-white/8 text-slate-500 hover:text-slate-300 hover:border-white/15'
+                    : 'hidden sm:inline-flex border-white/8 text-slate-500 hover:text-slate-300 hover:border-white/15'
                 }`}
               >
                 {a.account_name}
               </button>
             ))}
             {accounts.length < 3 && (
-              <Link href="/onboarding" className="flex items-center gap-1 text-xs font-medium border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 px-3 py-1.5 rounded-lg transition-colors">
+              <Link href="/onboarding" className="hidden sm:flex items-center gap-1 text-xs font-medium border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 px-3 py-1.5 rounded-lg transition-colors">
                 + Add account
               </Link>
             )}
@@ -783,7 +783,7 @@ export default function Dashboard() {
 
       {/* ── Main ────────────────────────────────────────────────────────────── */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-6 py-7 space-y-6">
+        <div className="max-w-5xl mx-auto px-3 sm:px-6 py-5 sm:py-7 space-y-6">
 
           {/* ── Overview ──────────────────────────────────────────────────────── */}
           {view === 'overview' && (<>
@@ -793,7 +793,7 @@ export default function Dashboard() {
               <div className="space-y-4">
 
                 {/* Action bar */}
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h2 className="text-sm font-semibold text-slate-100">Security Overview</h2>
                     {lastScan ? (
@@ -1004,7 +1004,7 @@ export default function Dashboard() {
               <div className="space-y-3">
 
                 {/* Header */}
-                <div className="flex items-center justify-between px-5 py-4 rounded-2xl border border-amber-700/30 bg-amber-950/10">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between px-5 py-4 rounded-2xl border border-amber-700/30 bg-amber-950/10 gap-3">
                   <div className="flex items-center gap-3">
                     <AlertTriangle size={15} className="text-amber-400 shrink-0" />
                     <div>
@@ -1016,7 +1016,7 @@ export default function Dashboard() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button onClick={handleStop}
                       className="text-xs text-slate-500 hover:text-slate-300 border border-white/8 hover:border-white/15 px-3 py-2 rounded-lg transition-colors">
                       Cancel
@@ -1141,7 +1141,7 @@ export default function Dashboard() {
               <div className="space-y-4">
 
                 {/* Action bar */}
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h2 className="text-sm font-semibold text-slate-100">Security Overview</h2>
                     {lastScan && (
@@ -1273,7 +1273,7 @@ export default function Dashboard() {
           {view === 'history' && (<>
 
             {/* Summary stats */}
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {[
                 { label: 'Total scans',         value: String(metrics?.total_scans ?? '—'), sub: 'all time',        Icon: Activity,   color: 'text-slate-100'  },
                 { label: 'Success rate',        value: metrics?.success_rate ?? '—',        sub: 'scans completed',   Icon: TrendingUp, color: 'text-violet-400' },
@@ -1324,19 +1324,19 @@ export default function Dashboard() {
                         className="w-full flex items-center gap-4 px-5 py-4 hover:bg-white/2 transition-colors text-left"
                       >
                         <ChevronRight size={14} className={`text-slate-600 shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
-                        <div className="flex-1 min-w-0 grid grid-cols-5 gap-4 items-center">
+                        <div className="flex-1 min-w-0 grid grid-cols-3 sm:grid-cols-5 gap-2 sm:gap-4 items-center">
                           <div className="col-span-2">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <p className="text-xs text-slate-400">{new Date(scan.start_time).toLocaleString()}</p>
                               <span className="text-xs px-1.5 py-0.5 rounded font-medium text-slate-400 border border-white/8 bg-white/4">{scan.account_name || 'Default'}</span>
                             </div>
-                            <p className="text-xs text-slate-600 font-mono mt-0.5">{scan.id}</p>
+                            <p className="text-xs text-slate-600 font-mono mt-0.5 truncate">{scan.id}</p>
                           </div>
-                          <div className="text-center">
+                          <div className="hidden sm:block text-center">
                             <p className="text-sm font-semibold text-slate-200">{scan.findings_count ?? 0}</p>
                             <p className="text-xs text-slate-600">findings</p>
                           </div>
-                          <div className="text-center">
+                          <div className="hidden sm:block text-center">
                             <p className="text-sm font-semibold text-violet-400">{Math.min(scan.remediations_count ?? 0, scan.findings_count ?? 0)}</p>
                             <p className="text-xs text-slate-600">fixed</p>
                           </div>

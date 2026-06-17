@@ -109,7 +109,7 @@ export default function OnboardingPage() {
       </header>
 
       {/* Two-column layout */}
-      <div className="flex-1 grid grid-cols-2 max-w-5xl mx-auto w-full px-8 py-16 gap-16">
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-2 max-w-5xl mx-auto w-full px-4 sm:px-8 py-10 sm:py-16 gap-10 md:gap-16">
 
         {/* Left: context */}
         <div className="flex flex-col justify-center">
