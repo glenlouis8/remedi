@@ -90,14 +90,24 @@ class ProcessManager:
 
     def stream_output(self):
         """Generator: yields stdout lines from the agent subprocess to the HTTP response."""
+        import select
         try:
-            for line in iter(self.process.stdout.readline, ""):
-                if line:
+            while True:
+                rlist, _, _ = select.select([self.process.stdout], [], [], 5.0)
+                if rlist:
+                    line = self.process.stdout.readline()
+                    if not line:
+                        break
                     sys.stdout.write(line)
                     sys.stdout.flush()
                     if "PAUSING FOR HUMAN REVIEW" in line:
                         self.waiting_for_approval = True
                     yield line if line.endswith("\n") else line + "\n"
+                else:
+                    if self.process.poll() is not None:
+                        break
+                    # SSE comment — keeps Render's proxy from buffering during startup
+                    yield ": heartbeat\n"
         finally:
             self.process.stdout.close()
             self.is_running = False
@@ -422,7 +432,7 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     from fastapi.responses import StreamingResponse
     return StreamingResponse(
         manager.stream_output(),
-        media_type="text/plain",
+        media_type="text/event-stream",
         headers={
             "X-Accel-Buffering": "no",
             "Cache-Control": "no-cache",
