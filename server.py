@@ -406,6 +406,9 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
 
     scan_id = f"SCAN-{uuid.uuid4().hex[:8].upper()}"
 
+    # Mark as queued before dispatch so stream() knows to keep waiting
+    r.set(f"scan:{scan_id}:status", "queued", ex=7200)
+
     # Hand off to Celery worker — FastAPI is now free
     run_scan_task.delay(scan_id, user_id, env)
 
@@ -418,7 +421,7 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
                     results = r_stream.xread({stream_key: last_id}, block=5000, count=100)
                 except Exception:
                     status = r.get(f"scan:{scan_id}:status")
-                    if status in ("done", "aborted", None):
+                    if status in ("done", "aborted"):
                         return
                     continue
                 if results:
@@ -430,9 +433,9 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
                                 return
                             yield data if data.endswith("\n") else data + "\n"
                 else:
-                    # block=5000 timed out with no messages — check if scan already finished
+                    # block=5000 timed out with no messages — only exit if explicitly done/aborted
                     status = r.get(f"scan:{scan_id}:status")
-                    if status in ("done", "aborted", None):
+                    if status in ("done", "aborted"):
                         return
         except GeneratorExit:
             # client disconnected (tab closed / refresh) — abort waiting worker
