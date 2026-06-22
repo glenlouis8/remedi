@@ -8,17 +8,6 @@ import datetime
 from mcp_server.database import update_scan
 from langchain_core.messages import HumanMessage, AIMessage
 
-def _make_langfuse_handler(scan_id: str):
-    try:
-        from langfuse.langchain import CallbackHandler
-        handler = CallbackHandler(trace_context={"trace_id": scan_id})
-        print(f"[LANGFUSE] Tracing initialized — scan_id={scan_id}")
-        return handler
-    except Exception as e:
-        print(f"[LANGFUSE] Failed to initialize tracing: {e}")
-        return None
-
-
 def run_interactive_session():
     """
     Main execution loop for AEGIS-FLOW.
@@ -31,10 +20,7 @@ def run_interactive_session():
     # Each scan gets its own thread — prevents state bleed between concurrent runs.
     scan_id = f"SCAN-{uuid.uuid4().hex[:8].upper()}"
 
-    # recursion_limit caps tool-call loops so a misbehaving agent can't run forever
-    langfuse_handler = _make_langfuse_handler(scan_id)
-    callbacks = [langfuse_handler] if langfuse_handler else []
-    config = {"configurable": {"thread_id": scan_id}, "recursion_limit": 25, "callbacks": callbacks}
+    config = {"configurable": {"thread_id": scan_id}, "recursion_limit": 25}
 
     # 2. Initial Input
     print(f"\n[SYSTEM] Initializing Audit Scan: {scan_id}")
@@ -176,10 +162,6 @@ def run_interactive_session():
     print("\n=======================================================")
     print("🏁 AEGIS-FLOW WORKFLOW COMPLETE")
     print("=======================================================")
-
-    if langfuse_handler:
-        langfuse_handler.flush()
-
 
 if __name__ == "__main__":
     run_interactive_session()
