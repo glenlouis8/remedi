@@ -517,7 +517,11 @@ export default function Dashboard() {
   const successLabel = fixedCount === 0 ? 'No vulnerabilities found' : 'All threats neutralized';
 
   if (!accountChecked) {
-    return <div className="flex h-screen items-center justify-center bg-[#09090b]" />;
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#09090b]">
+        <div className="w-6 h-6 rounded-full border-2 border-violet-500/30 border-t-violet-500 animate-spin" />
+      </div>
+    );
   }
 
   return (
