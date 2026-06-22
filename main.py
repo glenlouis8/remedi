@@ -10,15 +10,8 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 def _make_langfuse_handler(scan_id: str):
     try:
-        from langfuse.callback import CallbackHandler
-        return CallbackHandler(
-            public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
-            secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
-            host=os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
-            session_id=scan_id,
-            user_id=os.environ.get("REMEDI_USER_ID"),
-            tags=["remedi", os.environ.get("REMEDI_ACCOUNT_NAME", "Default")],
-        )
+        from langfuse.langchain import CallbackHandler
+        return CallbackHandler(trace_context={"trace_id": scan_id})
     except Exception:
         return None
 
