@@ -806,7 +806,7 @@ export default function Dashboard() {
                     <h2 className="text-sm font-semibold text-slate-100">Security Overview</h2>
                     {lastScan ? (
                       <p className="text-xs text-slate-600 mt-0.5 font-mono">
-                        Last scan {new Date(lastScan.start_time).toLocaleString()} · {lastScan.findings_count ?? 0} findings · {lastScan.remediations_count ?? 0} fixed
+                        Last scan {new Date(lastScan.start_time.endsWith('Z') ? lastScan.start_time : lastScan.start_time + 'Z').toLocaleString()} · {lastScan.findings_count ?? 0} findings · {lastScan.remediations_count ?? 0} fixed
                       </p>
                     ) : (
                       <p className="text-xs text-slate-600 mt-0.5">No scans run yet</p>
@@ -1154,7 +1154,7 @@ export default function Dashboard() {
                     <h2 className="text-sm font-semibold text-slate-100">Security Overview</h2>
                     {lastScan && (
                       <p className="text-xs text-slate-600 mt-0.5 font-mono">
-                        {lastScan.id} · {new Date(lastScan.start_time).toLocaleString()}
+                        {lastScan.id} · {new Date(lastScan.start_time.endsWith('Z') ? lastScan.start_time : lastScan.start_time + 'Z').toLocaleString()}
                       </p>
                     )}
                   </div>
@@ -1335,7 +1335,7 @@ export default function Dashboard() {
                         <div className="flex-1 min-w-0 grid grid-cols-5 gap-4 items-center">
                           <div className="col-span-2">
                             <div className="flex items-center gap-2">
-                              <p className="text-xs text-slate-400">{new Date(scan.start_time).toLocaleString()}</p>
+                              <p className="text-xs text-slate-400">{new Date(scan.start_time.endsWith('Z') ? scan.start_time : scan.start_time + 'Z').toLocaleString()}</p>
                               <span className="text-xs px-1.5 py-0.5 rounded font-medium text-slate-400 border border-white/8 bg-white/4">{scan.account_name || 'Default'}</span>
                             </div>
                             <p className="text-xs text-slate-600 font-mono mt-0.5">{scan.id}</p>
@@ -1373,7 +1373,7 @@ export default function Dashboard() {
                               {detail.end_time && (
                                 <div className="flex items-center gap-6 text-xs text-slate-500">
                                   <span>Duration: <span className="text-slate-300">{
-                                    Math.round((new Date(detail.end_time).getTime() - new Date(detail.start_time).getTime()) / 1000)
+                                    Math.round((new Date(detail.end_time.endsWith('Z') ? detail.end_time : detail.end_time + 'Z').getTime() - new Date(detail.start_time.endsWith('Z') ? detail.start_time : detail.start_time + 'Z').getTime()) / 1000)
                                   }s</span></span>
                                 </div>
                               )}
