@@ -278,9 +278,28 @@ export default function Dashboard() {
       } catch { /* ignore */ }
     };
     poll();
-    const id = setInterval(poll, 3000);
-    return () => clearInterval(id);
   }, [getToken]);
+
+  // Re-fetch metrics/compliance/history once after each scan completes
+  useEffect(() => {
+    if (scanState !== 'complete') return;
+    const refresh = async () => {
+      try {
+        const hdr = { Authorization: `Bearer ${await getToken()}` };
+        const [s, c, m, hist] = await Promise.all([
+          fetch(`${API}/api/status`,          { headers: hdr }).then(r => r.json()),
+          fetch(`${API}/api/compliance`,      { headers: hdr }).then(r => r.json()),
+          fetch(`${API}/api/metrics`,         { headers: hdr }).then(r => r.json()),
+          fetch(`${API}/api/metrics/history`, { headers: hdr }).then(r => r.json()),
+        ]);
+        if (Array.isArray(s)) setChecks(s);
+        if (c?.score !== undefined) setCisScore(c);
+        if (m?.total_scans !== undefined) setMetrics(m);
+        if (Array.isArray(hist)) setScanHistory(hist);
+      } catch { /* ignore */ }
+    };
+    refresh();
+  }, [scanState, getToken]);
 
   const startScan = async () => {
     setScanState('scanning');
