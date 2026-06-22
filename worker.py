@@ -49,7 +49,7 @@ def run_scan_task(self, scan_id: str, user_id: str, env: dict):
             continue
 
         print(line, end="", flush=True)
-        r.publish(f"scan:{scan_id}:output", line)
+        r.xadd(f"scan:{scan_id}:stream", {"line": line}, maxlen=2000)
 
         if "[ACTION_REQUIRED] WAITING_FOR_APPROVAL" in line:
             r.set(f"scan:{scan_id}:status", "waiting_approval", ex=7200)
@@ -74,5 +74,6 @@ def run_scan_task(self, scan_id: str, user_id: str, env: dict):
     r.delete(f"cache:{user_id}:metrics", f"cache:{user_id}:history")
     r.delete("cache:status", "cache:compliance", "cache:breakdown")
 
-    # Signal stream consumers that output is finished
-    r.publish(f"scan:{scan_id}:output", "__DONE__")
+    # Signal stream consumers that output is finished; expire stream after 2 hours
+    r.xadd(f"scan:{scan_id}:stream", {"line": "__DONE__"})
+    r.expire(f"scan:{scan_id}:stream", 7200)

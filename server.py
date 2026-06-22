@@ -38,8 +38,8 @@ app.add_middleware(
 # --- REDIS ---
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 r = redis_lib.Redis.from_url(REDIS_URL, decode_responses=True)
-# Separate connection for pubsub streaming — no socket timeout so it can block during long scans
-r_pubsub = redis_lib.Redis.from_url(
+# Separate connection for blocking XREAD — no socket timeout so it can block during long scans
+r_stream = redis_lib.Redis.from_url(
     REDIS_URL,
     decode_responses=True,
     socket_timeout=None,
@@ -410,23 +410,26 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     run_scan_task.delay(scan_id, user_id, env)
 
     def stream():
+        stream_key = f"scan:{scan_id}:stream"
+        last_id = "0"  # read from the very beginning — catches messages published before subscribe
         while True:
-            pubsub = r_pubsub.pubsub()
-            pubsub.subscribe(f"scan:{scan_id}:output")
             try:
-                for message in pubsub.listen():
-                    if message["type"] == "message":
-                        data = message["data"]
+                results = r_stream.xread({stream_key: last_id}, block=5000, count=100)
+            except Exception:
+                status = r.get(f"scan:{scan_id}:status")
+                if status in ("done", "aborted", None):
+                    return
+                continue
+            if results:
+                for _, messages in results:
+                    for msg_id, fields in messages:
+                        last_id = msg_id
+                        data = fields.get("line", "")
                         if data == "__DONE__":
                             return
                         yield data if data.endswith("\n") else data + "\n"
-                return
-            except Exception:
-                # reconnect on timeout/disconnect and keep streaming
-                try:
-                    pubsub.unsubscribe(f"scan:{scan_id}:output")
-                except Exception:
-                    pass
+            else:
+                # block=5000 timed out with no messages — check if scan already finished
                 status = r.get(f"scan:{scan_id}:status")
                 if status in ("done", "aborted", None):
                     return
