@@ -91,13 +91,15 @@ class ProcessManager:
     def stream_output(self):
         """Generator: yields stdout lines from the agent subprocess to the HTTP response."""
         import select
+        raw = self.process.stdout.buffer  # binary fd — select works correctly on this
         try:
             while True:
-                rlist, _, _ = select.select([self.process.stdout], [], [], 5.0)
+                rlist, _, _ = select.select([raw], [], [], 5.0)
                 if rlist:
-                    line = self.process.stdout.readline()
-                    if not line:
+                    line_bytes = raw.readline()
+                    if not line_bytes:
                         break
+                    line = line_bytes.decode("utf-8", errors="replace")
                     sys.stdout.write(line)
                     sys.stdout.flush()
                     if "PAUSING FOR HUMAN REVIEW" in line:

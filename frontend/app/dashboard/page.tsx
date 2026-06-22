@@ -277,8 +277,6 @@ export default function Dashboard() {
       } catch { /* ignore */ }
     };
     poll();
-    const id = setInterval(poll, 3000);
-    return () => clearInterval(id);
   }, [getToken]);
 
   const startScan = async () => {
@@ -382,11 +380,11 @@ export default function Dashboard() {
             }
           }
 
-          const execMatch = raw.match(/\[EXEC\] Calling (\w+) with \{(.+)\}/);
-          if (execMatch) {
-            const funcName      = execMatch[1];
-            const resourceMatch = execMatch[2].match(/['"]([\w\-\.]+)['"]/);
-            const resource      = resourceMatch?.[1] || funcName;
+          for (const execMatch of raw.matchAll(/\[EXEC\] Calling (\w+) with \{([^}]+)\}/g)) {
+            const funcName = execMatch[1];
+            // params are like {'key': 'value'} — second quoted string is the resource ID
+            const allQuoted = [...execMatch[2].matchAll(/['"]([\w\-\.]+)['"]/g)];
+            const resource = allQuoted[1]?.[1] || allQuoted[0]?.[1] || funcName;
             tracker.push({ resource, status: 'running' });
             setScanState('remediating');
             setRemediationSteps(prev => [...prev, { funcName, resource, status: 'running' }]);
@@ -423,12 +421,22 @@ export default function Dashboard() {
         setScanState('idle');
       } else {
         setScanState('complete');
-        // Refresh remaining scans count
-        getToken().then(tok =>
-          fetch(`${API}/api/scans/remaining?account_name=${encodeURIComponent(selectedAccount)}`, {
-            headers: { Authorization: `Bearer ${tok}` },
-          }).then(r => r.ok ? r.json() : null).then(d => { if (d) setScansRemaining(d.remaining); }).catch(() => {})
-        );
+        // Refresh all dashboard data after scan completes
+        getToken().then(async tok => {
+          const hdr = { Authorization: `Bearer ${tok}` };
+          const [s, c, m, hist, rem] = await Promise.all([
+            fetch(`${API}/api/status`,          { headers: hdr }).then(r => r.json()).catch(() => null),
+            fetch(`${API}/api/compliance`,      { headers: hdr }).then(r => r.json()).catch(() => null),
+            fetch(`${API}/api/metrics`,         { headers: hdr }).then(r => r.json()).catch(() => null),
+            fetch(`${API}/api/metrics/history`, { headers: hdr }).then(r => r.json()).catch(() => null),
+            fetch(`${API}/api/scans/remaining?account_name=${encodeURIComponent(selectedAccount)}`, { headers: hdr }).then(r => r.json()).catch(() => null),
+          ]);
+          if (Array.isArray(s)) setChecks(s);
+          if (c?.score !== undefined) setCisScore(c);
+          if (m?.total_scans !== undefined) setMetrics(m);
+          if (Array.isArray(hist)) setScanHistory(hist);
+          if (rem?.remaining !== undefined) setScansRemaining(rem.remaining);
+        });
         if (!hadVulns) {
           setShowSuccess(true);
           setTimeout(() => setShowSuccess(false), 4500);
@@ -513,7 +521,11 @@ export default function Dashboard() {
   const successLabel = fixedCount === 0 ? 'No vulnerabilities found' : 'All threats neutralized';
 
   if (!accountChecked) {
-    return <div className="flex h-screen items-center justify-center bg-[#09090b]" />;
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#09090b]">
+        <div className="w-6 h-6 rounded-full border-2 border-violet-500/30 border-t-violet-500 animate-spin" />
+      </div>
+    );
   }
 
   return (
