@@ -99,7 +99,7 @@ def _run_sub_agent(
         HumanMessage(content="Begin your audit now."),
     ]
     finding_pattern = re.compile(
-        r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+)",
+        r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+?)\s*(?:\|\s*FIX:\s*(.+))?$",
         re.IGNORECASE,
     )
     accumulated_findings: list[str] = []
@@ -180,7 +180,7 @@ def _run_sub_agent(
 
 _OUTPUT_FORMAT = (
     "\n\nOutput each finding on its own line in exactly this format:\n"
-    "FINDING: <resource name> | SEVERITY: <CRITICAL|HIGH|MEDIUM> | REASON: <one sentence why>\n"
+    "FINDING: <resource name> | SEVERITY: <CRITICAL|HIGH|MEDIUM> | REASON: <one sentence explaining the specific risk and potential impact> | FIX: <one sentence describing what will be done to remediate it>\n"
     "If a tool returns an error, output: ERROR: <service> scan failed — <reason>\n"
     "If nothing is wrong, output exactly: <service>: No issues found."
 )
@@ -324,23 +324,23 @@ def orchestrator_node(state: AgentState):
 
                 # Parse FINDING lines to emit one [SCAN] event per actual resource
                 finding_pattern = re.compile(
-                    r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+)",
+                    r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+?)\s*(?:\|\s*FIX:\s*(.+))?$",
                     re.IGNORECASE,
                 )
                 parsed_findings = finding_pattern.findall(text)
 
                 if parsed_findings:
                     seen_resources = set()
-                    for resource_name, severity, reason in parsed_findings:
+                    for resource_name, severity, reason, fix in parsed_findings:
                         resource_name = resource_name.strip()
                         if resource_name in seen_resources:
                             continue
                         seen_resources.add(resource_name)
                         scan_status = "vulnerable" if severity.upper() in ("CRITICAL", "HIGH") else "ok"
-                        print(
-                            f"[SCAN] {json.dumps({'service': svc_key, 'resource': resource_name, 'status': scan_status, 'msg': reason.strip()[:120]})}",
-                            flush=True,
-                        )
+                        event = {'service': svc_key, 'resource': resource_name, 'status': scan_status, 'msg': reason.strip()[:200]}
+                        if fix:
+                            event['fix'] = fix.strip()[:200]
+                        print(f"[SCAN] {json.dumps(event)}", flush=True)
                 else:
                     # No findings — emit one clean event for the service
                     has_issues = any(

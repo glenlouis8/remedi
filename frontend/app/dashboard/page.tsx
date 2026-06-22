@@ -50,7 +50,7 @@ interface ScanDetail {
 interface RemediationStep { funcName: string; resource: string; status: 'running' | 'success' | 'error' }
 
 type ScanState = 'idle' | 'scanning' | 'awaiting_approval' | 'remediating' | 'complete'
-interface ScanItem { resource: string; status: 'ok' | 'vulnerable'; msg: string }
+interface ScanItem { resource: string; status: 'ok' | 'vulnerable'; msg: string; fix?: string }
 type ServiceKey = 'iam' | 's3' | 'vpc' | 'sg' | 'ec2' | 'rds' | 'lambda' | 'cloudtrail'
 
 const SERVICE_META: Record<ServiceKey, { label: string; Icon: React.ComponentType<{ size?: number; className?: string }> }> = {
@@ -159,6 +159,7 @@ export default function Dashboard() {
   const [remediationSteps, setRemediationSteps] = useState<RemediationStep[]>([]);
   const [approvedItems, setApprovedItems]       = useState<Set<string>>(new Set());
   const [resourceReasons, setResourceReasons]   = useState<Record<string, string>>({});
+  const [resourceFixes, setResourceFixes]       = useState<Record<string, string>>({});
   const [showSuccess, setShowSuccess]           = useState(false);
 
   const [expandedScanId, setExpandedScanId] = useState<string | null>(null);
@@ -292,6 +293,7 @@ export default function Dashboard() {
     setRemediationPlan([]);
     setRemediationSteps([]);
     setResourceReasons({});
+    setResourceFixes({});
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -301,6 +303,7 @@ export default function Dashboard() {
     // Local accumulators — avoids React batching causing old state to leak into new scans.
     const localItems: Partial<Record<ServiceKey, ScanItem[]>> = {};
     const localReasons: Record<string, string> = {};
+    const localFixes: Record<string, string> = {};
 
     try {
       const token = await getToken();
@@ -347,6 +350,9 @@ export default function Dashboard() {
                 if (event.status === 'vulnerable' && event.msg) {
                   localReasons[event.resource] = event.msg;
                 }
+                if (event.status === 'vulnerable' && event.fix) {
+                  localFixes[event.resource] = event.fix;
+                }
               }
             } catch { /* malformed */ }
             continue;
@@ -366,6 +372,7 @@ export default function Dashboard() {
             setScanState('awaiting_approval');
             // Flush reasons; start with nothing approved — user must explicitly approve
             setResourceReasons({ ...localReasons });
+            setResourceFixes({ ...localFixes });
             setApprovedItems(new Set());
           }
 
@@ -1057,6 +1064,7 @@ export default function Dashboard() {
                     const info       = REMEDIATION_INFO[item.toolName];
                     const isApproved = approvedItems.has(item.resource);
                     const whyText    = resourceReasons[item.resource] || info?.risk || 'Vulnerability detected';
+                    const fixText    = resourceFixes[item.resource];
                     return (
                       <div key={i} className={`rounded-xl border transition-all duration-200 overflow-hidden ${
                         isApproved ? 'border-violet-700/40 bg-violet-950/10' : 'border-white/8 bg-[#111116]'
@@ -1078,6 +1086,11 @@ export default function Dashboard() {
                               </span>
                             </div>
                             <p className="text-xs text-slate-400 mt-1 leading-relaxed">{whyText}</p>
+                            {fixText && (
+                              <p className="text-xs text-emerald-600/80 mt-1 leading-relaxed">
+                                Fix: {fixText}
+                              </p>
+                            )}
                           </div>
 
                           {/* Toggle */}
