@@ -63,6 +63,10 @@ def run_scan_task(self, scan_id: str, user_id: str, env: dict):
                 return
 
             _, decision = result
+            if not decision.startswith("approve"):
+                process.terminate()
+                r.set(f"scan:{scan_id}:status", "aborted", ex=7200)
+                return
             process.stdin.write(decision + "\n")
             process.stdin.flush()
             r.set(f"scan:{scan_id}:status", "running", ex=7200)

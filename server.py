@@ -412,27 +412,31 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     def stream():
         stream_key = f"scan:{scan_id}:stream"
         last_id = "0"  # read from the very beginning — catches messages published before subscribe
-        while True:
-            try:
-                results = r_stream.xread({stream_key: last_id}, block=5000, count=100)
-            except Exception:
-                status = r.get(f"scan:{scan_id}:status")
-                if status in ("done", "aborted", None):
-                    return
-                continue
-            if results:
-                for _, messages in results:
-                    for msg_id, fields in messages:
-                        last_id = msg_id
-                        data = fields.get("line", "")
-                        if data == "__DONE__":
-                            return
-                        yield data if data.endswith("\n") else data + "\n"
-            else:
-                # block=5000 timed out with no messages — check if scan already finished
-                status = r.get(f"scan:{scan_id}:status")
-                if status in ("done", "aborted", None):
-                    return
+        try:
+            while True:
+                try:
+                    results = r_stream.xread({stream_key: last_id}, block=5000, count=100)
+                except Exception:
+                    status = r.get(f"scan:{scan_id}:status")
+                    if status in ("done", "aborted", None):
+                        return
+                    continue
+                if results:
+                    for _, messages in results:
+                        for msg_id, fields in messages:
+                            last_id = msg_id
+                            data = fields.get("line", "")
+                            if data == "__DONE__":
+                                return
+                            yield data if data.endswith("\n") else data + "\n"
+                else:
+                    # block=5000 timed out with no messages — check if scan already finished
+                    status = r.get(f"scan:{scan_id}:status")
+                    if status in ("done", "aborted", None):
+                        return
+        except GeneratorExit:
+            # client disconnected (tab closed / refresh) — abort waiting worker
+            r.lpush(f"scan:{scan_id}:decision", "abort")
 
     return StreamingResponse(
         stream(),
