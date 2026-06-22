@@ -1,4 +1,5 @@
 import os
+import sys
 import subprocess
 import redis
 from celery import Celery
@@ -21,15 +22,23 @@ def run_scan_task(self, scan_id: str, user_id: str, env: dict):
     proc_env["PYTHONUNBUFFERED"] = "1"
     proc_env["REMEDI_SCAN_ID"] = scan_id
 
-    process = subprocess.Popen(
-        ["python", "-u", "main.py"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        env=proc_env,
-        text=True,
-        bufsize=1,
-    )
+    print(f"[worker] spawning main.py for {scan_id} with python={sys.executable}", flush=True)
+    try:
+        process = subprocess.Popen(
+            [sys.executable, "-u", "main.py"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=proc_env,
+            text=True,
+            bufsize=1,
+        )
+    except Exception as exc:
+        print(f"[worker] failed to spawn main.py: {exc}", flush=True)
+        r.publish(f"scan:{scan_id}:output", f"[ERROR] Could not start scan process: {exc}\n")
+        r.publish(f"scan:{scan_id}:output", "__DONE__")
+        r.set(f"scan:{scan_id}:status", "done", ex=7200)
+        return
 
     # Store owner so /api/approve can verify the caller owns this scan
     r.set(f"scan:{scan_id}:owner", user_id, ex=7200)
