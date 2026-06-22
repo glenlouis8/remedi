@@ -20,7 +20,16 @@ def run_interactive_session():
     # Each scan gets its own thread — prevents state bleed between concurrent runs.
     scan_id = f"SCAN-{uuid.uuid4().hex[:8].upper()}"
 
-    config = {"configurable": {"thread_id": scan_id}, "recursion_limit": 25}
+    config = {
+        "configurable": {"thread_id": scan_id},
+        "recursion_limit": 25,
+        "run_name": scan_id,
+        "metadata": {
+            "scan_id": scan_id,
+            "user_id": os.environ.get("REMEDI_USER_ID", "unknown"),
+            "account_name": os.environ.get("REMEDI_ACCOUNT_NAME", "Default"),
+        },
+    }
 
     # 2. Initial Input
     print(f"\n[SYSTEM] Initializing Audit Scan: {scan_id}")
