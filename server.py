@@ -423,6 +423,8 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
                     status = r.get(f"scan:{scan_id}:status")
                     if status in ("done", "aborted"):
                         return
+                    # SSE comment — keeps Render's proxy from buffering/closing on errors
+                    yield ": heartbeat\n"
                     continue
                 if results:
                     for _, messages in results:
@@ -437,13 +439,15 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
                     status = r.get(f"scan:{scan_id}:status")
                     if status in ("done", "aborted"):
                         return
+                    # SSE comment — keeps Render's proxy from buffering while waiting for output
+                    yield ": heartbeat\n"
         except GeneratorExit:
             # client disconnected (tab closed / refresh) — abort waiting worker
             r.lpush(f"scan:{scan_id}:decision", "abort")
 
     return StreamingResponse(
         stream(),
-        media_type="text/plain",
+        media_type="text/event-stream",
         headers={
             "X-Accel-Buffering": "no",
             "Cache-Control": "no-cache",
