@@ -9,7 +9,14 @@ load_dotenv()
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
-celery_app = Celery("remedi", broker=REDIS_URL)
+# Celery/kombu rejects a rediss:// broker URL unless ssl_cert_reqs is set.
+# Upstash gives a rediss:// URL without it — append a default so the worker can start.
+# (redis-py clients below handle TLS on their own and don't need this.)
+BROKER_URL = REDIS_URL
+if BROKER_URL.startswith("rediss://") and "ssl_cert_reqs" not in BROKER_URL:
+    BROKER_URL += ("&" if "?" in BROKER_URL else "?") + "ssl_cert_reqs=CERT_NONE"
+
+celery_app = Celery("remedi", broker=BROKER_URL)
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 # Separate connection for blpop — no socket timeout so it can block up to 1800s
 r_blocking = redis.Redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=None)
