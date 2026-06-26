@@ -3,8 +3,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@clerk/nextjs';
-import { ShieldCheck, Eye, EyeOff, ExternalLink, AlertTriangle, Lock, Upload, CheckCircle, ArrowLeft } from 'lucide-react';
+import { ShieldCheck, Eye, EyeOff, ExternalLink, AlertTriangle, Lock, Upload, CheckCircle, ArrowLeft, LogOut } from 'lucide-react';
 import Link from 'next/link';
+import { useClerk } from '@clerk/nextjs';
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
 
@@ -21,6 +22,7 @@ function parseCredentialsCsv(text: string): { access_key: string; secret_key: st
 
 export default function OnboardingPage() {
   const { getToken } = useAuth();
+  const { signOut } = useClerk();
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -101,15 +103,27 @@ export default function OnboardingPage() {
           </div>
           <span className="font-semibold tracking-tight text-white">Remedi</span>
         </Link>
-        {hasExistingAccount && (
-          <Link href="/dashboard" className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors">
-            <ArrowLeft size={13} /> Back to dashboard
-          </Link>
-        )}
+        <div className="flex items-center gap-4">
+          {hasExistingAccount && (
+            <Link href="/dashboard" className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors">
+              <ArrowLeft size={13} /> Back to dashboard
+            </Link>
+          )}
+          <button
+            onClick={async () => {
+              const token = await getToken();
+              if (token) await fetch(`${API}/api/accounts`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }).catch(console.error);
+              signOut({ redirectUrl: '/' });
+            }}
+            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            <LogOut size={13} /> Sign out
+          </button>
+        </div>
       </header>
 
       {/* Two-column layout */}
-      <div className="flex-1 grid grid-cols-2 max-w-5xl mx-auto w-full px-8 py-16 gap-16">
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-2 max-w-5xl mx-auto w-full px-4 sm:px-8 py-10 sm:py-16 gap-10 md:gap-16">
 
         {/* Left: context */}
         <div className="flex flex-col justify-center">

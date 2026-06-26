@@ -74,7 +74,7 @@ export default function HomePage() {
       <div className="min-h-screen bg-[#09090b] text-white flex flex-col font-sora">
 
         {/* Nav */}
-        <nav className="relative z-10 flex items-center justify-between px-8 py-5 border-b border-white/5">
+        <nav className="relative z-10 flex items-center justify-between px-4 sm:px-8 py-5 border-b border-white/5">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-violet-500/15 border border-violet-500/25 flex items-center justify-center">
               <ShieldCheck size={15} className="text-violet-400" />
@@ -82,21 +82,21 @@ export default function HomePage() {
             <span className="font-semibold tracking-tight text-white">Remedi</span>
             <span className="text-xs font-medium px-1.5 py-0.5 rounded-full border font-mono-code" style={{ color: '#f59e0b', borderColor: 'rgba(245,158,11,0.25)', background: 'rgba(245,158,11,0.08)' }}>beta</span>
           </div>
-          <div className="flex items-center gap-6">
-            <Link href="/about" className="text-sm text-slate-400 hover:text-white transition-colors">About</Link>
-            <Link href="/developer" className="text-sm text-slate-400 hover:text-white transition-colors">Built by</Link>
+          <div className="flex items-center gap-3 sm:gap-6">
+            <Link href="/about" className="hidden sm:block text-sm text-slate-400 hover:text-white transition-colors">About</Link>
+            <Link href="/developer" className="hidden sm:block text-sm text-slate-400 hover:text-white transition-colors">Built by</Link>
             {isSignedIn ? (
               <>
                 <Link href="/dashboard" className="text-sm bg-violet-500 hover:bg-violet-400 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
                   Dashboard
                 </Link>
-                <button onClick={() => signOut({ redirectUrl: '/' })} className="text-sm text-slate-400 hover:text-white transition-colors">
+                <button onClick={() => signOut({ redirectUrl: '/' })} className="hidden sm:block text-sm text-slate-400 hover:text-white transition-colors">
                   Sign out
                 </button>
               </>
             ) : (
               <>
-                <Link href="/sign-in" className="text-sm text-slate-400 hover:text-white transition-colors">Sign in</Link>
+                <Link href="/sign-in" className="hidden sm:block text-sm text-slate-400 hover:text-white transition-colors">Sign in</Link>
                 <Link href="/sign-up" className="text-sm bg-violet-500 hover:bg-violet-400 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
                   Try free
                 </Link>
@@ -121,7 +121,7 @@ export default function HomePage() {
             <p className="text-slate-400 text-lg mb-10 leading-relaxed max-w-xl mx-auto">
               Connect your account, get a full security audit across 8 services in minutes, and fix every finding — only after you approve it.
             </p>
-            <div className="flex items-center justify-center gap-4 fade-up delay-2">
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 fade-up delay-2">
               <Link
                 href={isSignedIn ? '/dashboard' : '/sign-up'}
                 className="inline-flex items-center gap-2 bg-violet-500 hover:bg-violet-400 text-white font-semibold px-6 py-3 rounded-xl transition-all hover:shadow-lg hover:shadow-violet-500/20"
@@ -169,7 +169,7 @@ export default function HomePage() {
               </div>
 
               {/* CIS score */}
-              <div className="px-6 py-5 border-b border-white/5 flex items-center justify-between">
+              <div className="px-4 sm:px-6 py-5 border-b border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <p className="text-xs text-slate-500 mb-1 font-mono-code uppercase tracking-wider">CIS AWS Foundations</p>
                   <div className="flex items-end gap-2">
@@ -244,14 +244,16 @@ export default function HomePage() {
 
         </main>
 
-        <footer className="relative z-10 border-t border-white/5 px-8 py-6 flex items-center justify-between text-xs text-slate-600">
+        <footer className="relative z-10 border-t border-white/5 px-4 sm:px-8 py-6 flex flex-col sm:flex-row items-center gap-3 sm:justify-between text-xs text-slate-600">
           <div className="flex items-center gap-2">
             <ShieldCheck size={13} className="text-violet-500/50" />
             <span>Remedi</span>
           </div>
-          <span>© {new Date().getFullYear()} — AWS credentials encrypted at rest, deleted on sign out, auto-expire after 30 min of inactivity</span>
-          <Link href="/about" className="hover:text-slate-400 transition-colors">About</Link>
-          <Link href="/developer" className="hover:text-slate-400 transition-colors">Built by</Link>
+          <span className="text-center">© {new Date().getFullYear()} — AWS credentials encrypted at rest, deleted on sign out, auto-expire after 30 min of inactivity</span>
+          <div className="flex items-center gap-4">
+            <Link href="/about" className="hover:text-slate-400 transition-colors">About</Link>
+            <Link href="/developer" className="hover:text-slate-400 transition-colors">Built by</Link>
+          </div>
         </footer>
       </div>
     </>

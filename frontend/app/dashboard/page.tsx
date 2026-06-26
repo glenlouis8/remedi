@@ -50,7 +50,7 @@ interface ScanDetail {
 interface RemediationStep { funcName: string; resource: string; status: 'running' | 'success' | 'error' }
 
 type ScanState = 'idle' | 'scanning' | 'awaiting_approval' | 'remediating' | 'complete'
-interface ScanItem { resource: string; status: 'ok' | 'vulnerable'; msg: string; fix?: string }
+interface ScanItem { resource: string; status: 'ok' | 'vulnerable'; msg: string }
 type ServiceKey = 'iam' | 's3' | 'vpc' | 'sg' | 'ec2' | 'rds' | 'lambda' | 'cloudtrail'
 
 const SERVICE_META: Record<ServiceKey, { label: string; Icon: React.ComponentType<{ size?: number; className?: string }> }> = {
@@ -159,7 +159,6 @@ export default function Dashboard() {
   const [remediationSteps, setRemediationSteps] = useState<RemediationStep[]>([]);
   const [approvedItems, setApprovedItems]       = useState<Set<string>>(new Set());
   const [resourceReasons, setResourceReasons]   = useState<Record<string, string>>({});
-  const [resourceFixes, setResourceFixes]       = useState<Record<string, string>>({});
   const [showSuccess, setShowSuccess]           = useState(false);
 
   const [expandedScanId, setExpandedScanId] = useState<string | null>(null);
@@ -175,6 +174,7 @@ export default function Dashboard() {
   const [confirmDelete, setConfirmDelete]   = useState(false);
   const [scansRemaining, setScansRemaining] = useState<number | null>(null);
   const [scanError, setScanError]           = useState<string | null>(null);
+  const [currentScanId, setCurrentScanId]   = useState<string | null>(null);
   const [dropdownOpen, setDropdownOpen]     = useState(false);
   const [iamPickerOpen, setIamPickerOpen]   = useState(false);
   const [iamLoading, setIamLoading]         = useState(false);
@@ -280,6 +280,27 @@ export default function Dashboard() {
     poll();
   }, [getToken]);
 
+  // Re-fetch metrics/compliance/history once after each scan completes
+  useEffect(() => {
+    if (scanState !== 'complete') return;
+    const refresh = async () => {
+      try {
+        const hdr = { Authorization: `Bearer ${await getToken()}` };
+        const [s, c, m, hist] = await Promise.all([
+          fetch(`${API}/api/status`,          { headers: hdr }).then(r => r.json()),
+          fetch(`${API}/api/compliance`,      { headers: hdr }).then(r => r.json()),
+          fetch(`${API}/api/metrics`,         { headers: hdr }).then(r => r.json()),
+          fetch(`${API}/api/metrics/history`, { headers: hdr }).then(r => r.json()),
+        ]);
+        if (Array.isArray(s)) setChecks(s);
+        if (c?.score !== undefined) setCisScore(c);
+        if (m?.total_scans !== undefined) setMetrics(m);
+        if (Array.isArray(hist)) setScanHistory(hist);
+      } catch { /* ignore */ }
+    };
+    refresh();
+  }, [scanState, getToken]);
+
   const startScan = async () => {
     setScanState('scanning');
     setScanError(null);
@@ -293,7 +314,6 @@ export default function Dashboard() {
     setRemediationPlan([]);
     setRemediationSteps([]);
     setResourceReasons({});
-    setResourceFixes({});
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -303,7 +323,6 @@ export default function Dashboard() {
     // Local accumulators — avoids React batching causing old state to leak into new scans.
     const localItems: Partial<Record<ServiceKey, ScanItem[]>> = {};
     const localReasons: Record<string, string> = {};
-    const localFixes: Record<string, string> = {};
 
     try {
       const token = await getToken();
@@ -350,9 +369,6 @@ export default function Dashboard() {
                 if (event.status === 'vulnerable' && event.msg) {
                   localReasons[event.resource] = event.msg;
                 }
-                if (event.status === 'vulnerable' && event.fix) {
-                  localFixes[event.resource] = event.fix;
-                }
               }
             } catch { /* malformed */ }
             continue;
@@ -367,12 +383,14 @@ export default function Dashboard() {
             continue;
           }
 
+          const scanIdMatch = raw.match(/Initializing Audit Scan: (SCAN-[A-Z0-9]+)/);
+          if (scanIdMatch) setCurrentScanId(scanIdMatch[1]);
+
           if (raw.includes('[ACTION_REQUIRED] WAITING_FOR_APPROVAL')) {
             setActiveService(null);
             setScanState('awaiting_approval');
             // Flush reasons; start with nothing approved — user must explicitly approve
             setResourceReasons({ ...localReasons });
-            setResourceFixes({ ...localFixes });
             setApprovedItems(new Set());
           }
 
@@ -387,11 +405,11 @@ export default function Dashboard() {
             }
           }
 
-          for (const execMatch of raw.matchAll(/\[EXEC\] Calling (\w+) with \{([^}]+)\}/g)) {
-            const funcName = execMatch[1];
-            // params are like {'key': 'value'} — second quoted string is the resource ID
-            const allQuoted = [...execMatch[2].matchAll(/['"]([\w\-\.]+)['"]/g)];
-            const resource = allQuoted[1]?.[1] || allQuoted[0]?.[1] || funcName;
+          const execMatch = raw.match(/\[EXEC\] Calling (\w+) with \{(.+)\}/);
+          if (execMatch) {
+            const funcName      = execMatch[1];
+            const resourceMatch = execMatch[2].match(/['"]([\w\-\.]+)['"]/);
+            const resource      = resourceMatch?.[1] || funcName;
             tracker.push({ resource, status: 'running' });
             setScanState('remediating');
             setRemediationSteps(prev => [...prev, { funcName, resource, status: 'running' }]);
@@ -428,22 +446,12 @@ export default function Dashboard() {
         setScanState('idle');
       } else {
         setScanState('complete');
-        // Refresh all dashboard data after scan completes
-        getToken().then(async tok => {
-          const hdr = { Authorization: `Bearer ${tok}` };
-          const [s, c, m, hist, rem] = await Promise.all([
-            fetch(`${API}/api/status`,          { headers: hdr }).then(r => r.json()).catch(() => null),
-            fetch(`${API}/api/compliance`,      { headers: hdr }).then(r => r.json()).catch(() => null),
-            fetch(`${API}/api/metrics`,         { headers: hdr }).then(r => r.json()).catch(() => null),
-            fetch(`${API}/api/metrics/history`, { headers: hdr }).then(r => r.json()).catch(() => null),
-            fetch(`${API}/api/scans/remaining?account_name=${encodeURIComponent(selectedAccount)}`, { headers: hdr }).then(r => r.json()).catch(() => null),
-          ]);
-          if (Array.isArray(s)) setChecks(s);
-          if (c?.score !== undefined) setCisScore(c);
-          if (m?.total_scans !== undefined) setMetrics(m);
-          if (Array.isArray(hist)) setScanHistory(hist);
-          if (rem?.remaining !== undefined) setScansRemaining(rem.remaining);
-        });
+        // Refresh remaining scans count
+        getToken().then(tok =>
+          fetch(`${API}/api/scans/remaining?account_name=${encodeURIComponent(selectedAccount)}`, {
+            headers: { Authorization: `Bearer ${tok}` },
+          }).then(r => r.ok ? r.json() : null).then(d => { if (d) setScansRemaining(d.remaining); }).catch(() => {})
+        );
         if (!hadVulns) {
           setShowSuccess(true);
           setTimeout(() => setShowSuccess(false), 4500);
@@ -506,7 +514,7 @@ export default function Dashboard() {
     await fetch(`${API}/api/approve`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approved_resources: approved }),
+      body: JSON.stringify({ scan_id: currentScanId, approved_resources: approved }),
     });
   };
 
@@ -672,7 +680,7 @@ export default function Dashboard() {
 
       {/* ── Top nav ─────────────────────────────────────────────────────────── */}
       <header className="shrink-0 border-b border-white/6" style={{ background: '#09090b' }}>
-        <div className="flex items-center justify-between px-6 h-14 gap-4">
+        <div className="flex items-center justify-between px-3 sm:px-6 h-14 gap-2 sm:gap-4">
 
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 shrink-0">
@@ -691,13 +699,13 @@ export default function Dashboard() {
               { key: 'settings',  label: 'Settings',  Icon: Lock            },
             ] as const).map(({ key, label, Icon }) => (
               <button key={key} onClick={() => setView(key)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                className={`flex items-center gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors ${
                   view === key
                     ? 'bg-violet-500/10 text-violet-400 font-medium'
                     : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
                 }`}>
                 <Icon size={14} />
-                {label}
+                <span className="hidden sm:inline">{label}</span>
               </button>
             ))}
           </nav>
@@ -727,14 +735,14 @@ export default function Dashboard() {
                 className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:opacity-40 ${
                   selectedAccount === a.account_name
                     ? 'bg-violet-500/10 border-violet-500/30 text-violet-400'
-                    : 'border-white/8 text-slate-500 hover:text-slate-300 hover:border-white/15'
+                    : 'hidden sm:inline-flex border-white/8 text-slate-500 hover:text-slate-300 hover:border-white/15'
                 }`}
               >
                 {a.account_name}
               </button>
             ))}
             {accounts.length < 3 && (
-              <Link href="/onboarding" className="flex items-center gap-1 text-xs font-medium border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 px-3 py-1.5 rounded-lg transition-colors">
+              <Link href="/onboarding" className="hidden sm:flex items-center gap-1 text-xs font-medium border border-violet-500/30 text-violet-400 hover:bg-violet-500/10 px-3 py-1.5 rounded-lg transition-colors">
                 + Add account
               </Link>
             )}
@@ -798,7 +806,7 @@ export default function Dashboard() {
 
       {/* ── Main ────────────────────────────────────────────────────────────── */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-6 py-7 space-y-6">
+        <div className="max-w-5xl mx-auto px-3 sm:px-6 py-5 sm:py-7 space-y-6">
 
           {/* ── Overview ──────────────────────────────────────────────────────── */}
           {view === 'overview' && (<>
@@ -808,12 +816,12 @@ export default function Dashboard() {
               <div className="space-y-4">
 
                 {/* Action bar */}
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h2 className="text-sm font-semibold text-slate-100">Security Overview</h2>
                     {lastScan ? (
                       <p className="text-xs text-slate-600 mt-0.5 font-mono">
-                        Last scan {new Date(lastScan.start_time.endsWith('Z') ? lastScan.start_time : lastScan.start_time + 'Z').toLocaleString()} · {lastScan.findings_count ?? 0} findings · {lastScan.remediations_count ?? 0} fixed
+                        Last scan {new Date(lastScan.start_time).toLocaleString()} · {lastScan.findings_count ?? 0} findings · {lastScan.remediations_count ?? 0} fixed
                       </p>
                     ) : (
                       <p className="text-xs text-slate-600 mt-0.5">No scans run yet</p>
@@ -1019,7 +1027,7 @@ export default function Dashboard() {
               <div className="space-y-3">
 
                 {/* Header */}
-                <div className="flex items-center justify-between px-5 py-4 rounded-2xl border border-amber-700/30 bg-amber-950/10">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between px-5 py-4 rounded-2xl border border-amber-700/30 bg-amber-950/10 gap-3">
                   <div className="flex items-center gap-3">
                     <AlertTriangle size={15} className="text-amber-400 shrink-0" />
                     <div>
@@ -1031,7 +1039,7 @@ export default function Dashboard() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button onClick={handleStop}
                       className="text-xs text-slate-500 hover:text-slate-300 border border-white/8 hover:border-white/15 px-3 py-2 rounded-lg transition-colors">
                       Cancel
@@ -1064,7 +1072,6 @@ export default function Dashboard() {
                     const info       = REMEDIATION_INFO[item.toolName];
                     const isApproved = approvedItems.has(item.resource);
                     const whyText    = resourceReasons[item.resource] || info?.risk || 'Vulnerability detected';
-                    const fixText    = resourceFixes[item.resource];
                     return (
                       <div key={i} className={`rounded-xl border transition-all duration-200 overflow-hidden ${
                         isApproved ? 'border-violet-700/40 bg-violet-950/10' : 'border-white/8 bg-[#111116]'
@@ -1086,11 +1093,6 @@ export default function Dashboard() {
                               </span>
                             </div>
                             <p className="text-xs text-slate-400 mt-1 leading-relaxed">{whyText}</p>
-                            {fixText && (
-                              <p className="text-xs text-emerald-600/80 mt-1 leading-relaxed">
-                                Fix: {fixText}
-                              </p>
-                            )}
                           </div>
 
                           {/* Toggle */}
@@ -1162,12 +1164,12 @@ export default function Dashboard() {
               <div className="space-y-4">
 
                 {/* Action bar */}
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h2 className="text-sm font-semibold text-slate-100">Security Overview</h2>
                     {lastScan && (
                       <p className="text-xs text-slate-600 mt-0.5 font-mono">
-                        {lastScan.id} · {new Date(lastScan.start_time.endsWith('Z') ? lastScan.start_time : lastScan.start_time + 'Z').toLocaleString()}
+                        {lastScan.id} · {new Date(lastScan.start_time).toLocaleString()}
                       </p>
                     )}
                   </div>
@@ -1294,7 +1296,7 @@ export default function Dashboard() {
           {view === 'history' && (<>
 
             {/* Summary stats */}
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {[
                 { label: 'Total scans',         value: String(metrics?.total_scans ?? '—'), sub: 'all time',        Icon: Activity,   color: 'text-slate-100'  },
                 { label: 'Success rate',        value: metrics?.success_rate ?? '—',        sub: 'scans completed',   Icon: TrendingUp, color: 'text-violet-400' },
@@ -1345,19 +1347,19 @@ export default function Dashboard() {
                         className="w-full flex items-center gap-4 px-5 py-4 hover:bg-white/2 transition-colors text-left"
                       >
                         <ChevronRight size={14} className={`text-slate-600 shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
-                        <div className="flex-1 min-w-0 grid grid-cols-5 gap-4 items-center">
+                        <div className="flex-1 min-w-0 grid grid-cols-3 sm:grid-cols-5 gap-2 sm:gap-4 items-center">
                           <div className="col-span-2">
-                            <div className="flex items-center gap-2">
-                              <p className="text-xs text-slate-400">{new Date(scan.start_time.endsWith('Z') ? scan.start_time : scan.start_time + 'Z').toLocaleString()}</p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-xs text-slate-400">{new Date(scan.start_time).toLocaleString()}</p>
                               <span className="text-xs px-1.5 py-0.5 rounded font-medium text-slate-400 border border-white/8 bg-white/4">{scan.account_name || 'Default'}</span>
                             </div>
-                            <p className="text-xs text-slate-600 font-mono mt-0.5">{scan.id}</p>
+                            <p className="text-xs text-slate-600 font-mono mt-0.5 truncate">{scan.id}</p>
                           </div>
-                          <div className="text-center">
+                          <div className="hidden sm:block text-center">
                             <p className="text-sm font-semibold text-slate-200">{scan.findings_count ?? 0}</p>
                             <p className="text-xs text-slate-600">findings</p>
                           </div>
-                          <div className="text-center">
+                          <div className="hidden sm:block text-center">
                             <p className="text-sm font-semibold text-violet-400">{Math.min(scan.remediations_count ?? 0, scan.findings_count ?? 0)}</p>
                             <p className="text-xs text-slate-600">fixed</p>
                           </div>
@@ -1386,7 +1388,7 @@ export default function Dashboard() {
                               {detail.end_time && (
                                 <div className="flex items-center gap-6 text-xs text-slate-500">
                                   <span>Duration: <span className="text-slate-300">{
-                                    Math.round((new Date(detail.end_time.endsWith('Z') ? detail.end_time : detail.end_time + 'Z').getTime() - new Date(detail.start_time.endsWith('Z') ? detail.start_time : detail.start_time + 'Z').getTime()) / 1000)
+                                    Math.round((new Date(detail.end_time).getTime() - new Date(detail.start_time).getTime()) / 1000)
                                   }s</span></span>
                                 </div>
                               )}

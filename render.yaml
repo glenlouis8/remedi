@@ -3,7 +3,7 @@ services:
     name: remedi-backend
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    startCommand: bash start.sh
     envVars:
       - key: DATABASE_URL
         sync: false
@@ -20,6 +20,16 @@ services:
       - key: DISCORD_FEEDBACK_WEBHOOK
         sync: false
       - key: AWS_DEFAULT_REGION
+        sync: false
+      - key: LANGSMITH_TRACING
+        sync: false
+      - key: LANGSMITH_API_KEY
+        sync: false
+      - key: LANGSMITH_PROJECT
+        sync: false
+      - key: LANGSMITH_ENDPOINT
+        sync: false
+      - key: REDIS_URL
         sync: false
 
   - type: web

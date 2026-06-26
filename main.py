@@ -18,7 +18,7 @@ def run_interactive_session():
 
     # 1. Generate scan ID first so it can be used as the LangGraph thread ID.
     # Each scan gets its own thread — prevents state bleed between concurrent runs.
-    scan_id = f"SCAN-{uuid.uuid4().hex[:8].upper()}"
+    scan_id = os.environ.get("REMEDI_SCAN_ID") or f"SCAN-{uuid.uuid4().hex[:8].upper()}"
 
     config = {
         "configurable": {"thread_id": scan_id},

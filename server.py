@@ -1,12 +1,14 @@
-import subprocess
+import json
 import os
 import sys
 import signal
 import threading
 import time
+import uuid
+import redis as redis_lib
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from mcp_server.database import (
@@ -21,6 +23,7 @@ from remedi_platform.accounts import (
     save_protected_users, get_protected_users,
 )
 from remedi_platform.compliance import get_cis_score
+from worker import celery_app, run_scan_task
 
 app = FastAPI()
 
@@ -31,6 +34,32 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- REDIS ---
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+r = redis_lib.Redis.from_url(REDIS_URL, decode_responses=True)
+# Separate connection for blocking XREAD — no socket timeout so it can block during long scans
+r_stream = redis_lib.Redis.from_url(
+    REDIS_URL,
+    decode_responses=True,
+    socket_timeout=None,
+    socket_connect_timeout=5,
+    socket_keepalive=True,
+    health_check_interval=30,
+)
+
+def _cache_get(key: str):
+    try:
+        val = r.get(key)
+        return json.loads(val) if val else None
+    except Exception:
+        return None
+
+def _cache_set(key: str, data, ttl: int = 30):
+    try:
+        r.set(key, json.dumps(data, default=str), ex=ttl)
+    except Exception:
+        pass
 
 # --- DB INIT ---
 max_retries = 30
@@ -50,7 +79,7 @@ for i in range(max_retries):
 # --- CREDENTIAL EXPIRY (30 min inactivity) ---
 def _credential_purge_loop():
     while True:
-        time.sleep(300)  # check every 5 minutes
+        time.sleep(300)
         try:
             purge_expired_credentials()
         except Exception as e:
@@ -59,92 +88,8 @@ def _credential_purge_loop():
 threading.Thread(target=_credential_purge_loop, daemon=True).start()
 
 
-# --- AGENT PROCESS MANAGER ---
-class ProcessManager:
-    def __init__(self):
-        self.process = None
-        self.is_running = False
-        self.waiting_for_approval = False
-
-    def start_agent(self, env: dict):
-        if self.is_running and self.process and self.process.poll() is None:
-            return
-
-        proc_env = os.environ.copy()
-        proc_env.update(env)
-        proc_env["PYTHONUNBUFFERED"] = "1"
-
-        self.process = subprocess.Popen(
-            ["python", "-u", "main.py"],
-            cwd=os.getcwd(),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env=proc_env,
-            text=True,
-            bufsize=1,
-            universal_newlines=True,
-        )
-        self.is_running = True
-        self.waiting_for_approval = False
-
-    def stream_output(self):
-        """Generator: yields stdout lines from the agent subprocess to the HTTP response."""
-        import select
-        raw = self.process.stdout.buffer  # binary fd — select works correctly on this
-        try:
-            while True:
-                rlist, _, _ = select.select([raw], [], [], 5.0)
-                if rlist:
-                    line_bytes = raw.readline()
-                    if not line_bytes:
-                        break
-                    line = line_bytes.decode("utf-8", errors="replace")
-                    sys.stdout.write(line)
-                    sys.stdout.flush()
-                    if "PAUSING FOR HUMAN REVIEW" in line:
-                        self.waiting_for_approval = True
-                    yield line if line.endswith("\n") else line + "\n"
-                else:
-                    if self.process.poll() is not None:
-                        break
-                    # SSE comment — keeps Render's proxy from buffering during startup
-                    yield ": heartbeat\n"
-        finally:
-            self.process.stdout.close()
-            self.is_running = False
-
-    def send_approval(self, approved_resources: list[str] | None = None):
-        if self.process and self.waiting_for_approval:
-            try:
-                if approved_resources:
-                    payload = "approve:" + ",".join(approved_resources) + "\n"
-                else:
-                    payload = "approve\n"
-                self.process.stdin.write(payload)
-                self.process.stdin.flush()
-                self.waiting_for_approval = False
-                return True
-            except (OSError, BrokenPipeError):
-                self.waiting_for_approval = False
-        return False
-
-
-# One manager per user session (keyed by user_id)
-_managers: dict[str, ProcessManager] = {}
-
-
-def _get_manager(user_id: str) -> ProcessManager:
-    if user_id not in _managers:
-        _managers[user_id] = ProcessManager()
-    return _managers[user_id]
-
-
 # --- SIGNAL HANDLING ---
 def handle_sigterm(*args):
-    for m in _managers.values():
-        if m.process and m.process.poll() is None:
-            m.process.terminate()
     sys.exit(0)
 
 signal.signal(signal.SIGTERM, handle_sigterm)
@@ -159,6 +104,10 @@ class AWSCredentials(BaseModel):
 class RunAgentRequest(BaseModel):
     account_name: str = 'Default'
 
+class ApproveRequest(BaseModel):
+    scan_id: str
+    approved_resources: list[str] | None = None
+
 
 # --- ROUTES ---
 
@@ -170,7 +119,6 @@ def connect_aws(creds: AWSCredentials, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Account name cannot be empty")
     user_id = user["sub"]
     existing = count_aws_accounts(user_id)
-    # Allow upsert on existing account name; only block if it's a brand-new name and already at 3
     accounts = list_aws_accounts(user_id)
     is_new = not any(a["account_name"] == creds.account_name for a in accounts)
     if is_new and existing >= 3:
@@ -238,15 +186,12 @@ def submit_feedback(body: FeedbackRequest, user: dict = Depends(get_current_user
 
 @app.delete("/api/user")
 def delete_user(user: dict = Depends(get_current_user)):
-    """Delete the Clerk user account and all their AWS credentials."""
     import requests as req
     user_id = user["sub"]
     clerk_secret = os.environ.get("CLERK_SECRET_KEY", "")
     if not clerk_secret:
         raise HTTPException(status_code=500, detail="Server misconfiguration")
-    # Delete AWS credentials first
     delete_aws_credentials(user_id)
-    # Delete Clerk user via backend API
     resp = req.delete(
         f"https://api.clerk.com/v1/users/{user_id}",
         headers={"Authorization": f"Bearer {clerk_secret}"},
@@ -267,7 +212,6 @@ def list_iam_users(account_name: str = "Default", user: dict = Depends(get_curre
             aws_access_key_id=creds["AWS_ACCESS_KEY_ID"],
             aws_secret_access_key=creds["AWS_SECRET_ACCESS_KEY"],
         )
-        # Who owns these credentials — always auto-protect this user
         sts = session.client("sts")
         identity = sts.get_caller_identity()
         credential_user = identity["Arn"].split("/")[-1]
@@ -300,12 +244,22 @@ def get_protected_users_route(account_name: str = "Default", user: dict = Depend
 
 @app.get("/api/compliance")
 def compliance_score(user: dict = Depends(get_current_user)):
-    return get_cis_score()
+    cached = _cache_get("cache:compliance")
+    if cached is not None:
+        return cached
+    data = get_cis_score()
+    _cache_set("cache:compliance", data, ttl=60)
+    return data
 
 
 @app.get("/api/status")
 def get_status(user: dict = Depends(get_current_user)):
-    return JSONResponse(content=get_all_status())
+    cached = _cache_get("cache:status")
+    if cached is not None:
+        return JSONResponse(content=cached)
+    data = get_all_status()
+    _cache_set("cache:status", data, ttl=60)
+    return JSONResponse(content=data)
 
 
 @app.get("/api/metrics")
@@ -314,6 +268,11 @@ def get_metrics(user: dict = Depends(get_current_user)):
     import psycopg2.extras
 
     user_id = user["sub"]
+    cache_key = f"cache:{user_id}:metrics"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     conn = get_connection()
     try:
         c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -326,11 +285,13 @@ def get_metrics(user: dict = Depends(get_current_user)):
         conn.close()
 
     if not scans:
-        return {
+        data = {
             "avg_mttr": "0s", "avg_ttd": "0s", "success_rate": "100%",
             "verification_pass_rate": "N/A",
             "total_scans": 0,
         }
+        _cache_set(cache_key, data, ttl=30)
+        return data
 
     durations, ttd_list = [], []
     verified_count = completed_count = aborted_count = 0
@@ -362,18 +323,27 @@ def get_metrics(user: dict = Depends(get_current_user)):
     total = len(scans)
     success_pct = int(completed_count / total * 100) if total else 100
 
-    return {
+    data = {
         "avg_mttr": f"{int(sum(durations) / len(durations) if durations else 0)}s",
         "avg_ttd": f"{int(sum(ttd_list) / len(ttd_list) if ttd_list else 0)}s",
         "success_rate": f"{success_pct}%",
         "verification_pass_rate": f"{int(verified_count / completed_count * 100)}%" if completed_count else "N/A",
         "total_scans": total,
     }
+    _cache_set(cache_key, data, ttl=30)
+    return data
 
 
 @app.get("/api/metrics/history")
 def get_history(user: dict = Depends(get_current_user)):
-    return get_scan_history(user_id=user["sub"])
+    user_id = user["sub"]
+    cache_key = f"cache:{user_id}:history"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+    data = get_scan_history(user_id=user_id)
+    _cache_set(cache_key, data, ttl=30)
+    return data
 
 
 @app.get("/api/metrics/history/{scan_id}")
@@ -386,7 +356,12 @@ def get_scan_detail_endpoint(scan_id: str, user: dict = Depends(get_current_user
 
 @app.get("/api/metrics/breakdown")
 def get_breakdown(user: dict = Depends(get_current_user)):
-    return get_remediation_breakdown()
+    cached = _cache_get("cache:breakdown")
+    if cached is not None:
+        return cached
+    data = get_remediation_breakdown()
+    _cache_set("cache:breakdown", data, ttl=60)
+    return data
 
 
 MAX_CONCURRENT_SCANS = 3
@@ -398,7 +373,8 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     if not creds:
         raise HTTPException(status_code=400, detail="No AWS account connected. Please complete onboarding first.")
 
-    active = sum(1 for m in _managers.values() if m.is_running)
+    # Count active scans via Redis
+    active = int(r.get("active_scans") or 0)
     if active >= MAX_CONCURRENT_SCANS:
         raise HTTPException(status_code=503, detail="Server is busy with other scans. Try again in a few minutes.")
 
@@ -408,7 +384,6 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
 
     env = dict(creds)
 
-    # Always auto-protect the IAM user whose credentials we're using
     import boto3
     try:
         sts = boto3.Session(
@@ -429,12 +404,46 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     env["REMEDI_USER_ID"] = user_id
     env["REMEDI_ACCOUNT_NAME"] = body.account_name or "Default"
 
-    manager = _get_manager(user_id)
-    manager.start_agent(env)
-    from fastapi.responses import StreamingResponse
+    scan_id = f"SCAN-{uuid.uuid4().hex[:8].upper()}"
+
+    # Mark as queued before dispatch so stream() knows to keep waiting
+    r.set(f"scan:{scan_id}:status", "queued", ex=7200)
+
+    # Hand off to Celery worker — FastAPI is now free
+    run_scan_task.delay(scan_id, user_id, env)
+
+    def stream():
+        stream_key = f"scan:{scan_id}:stream"
+        last_id = "0"  # read from the very beginning — catches messages published before subscribe
+        try:
+            while True:
+                try:
+                    results = r_stream.xread({stream_key: last_id}, block=5000, count=100)
+                except Exception:
+                    status = r.get(f"scan:{scan_id}:status")
+                    if status in ("done", "aborted"):
+                        return
+                    continue
+                if results:
+                    for _, messages in results:
+                        for msg_id, fields in messages:
+                            last_id = msg_id
+                            data = fields.get("line", "")
+                            if data == "__DONE__":
+                                return
+                            yield data if data.endswith("\n") else data + "\n"
+                else:
+                    # block=5000 timed out with no messages — only exit if explicitly done/aborted
+                    status = r.get(f"scan:{scan_id}:status")
+                    if status in ("done", "aborted"):
+                        return
+        except GeneratorExit:
+            # client disconnected (tab closed / refresh) — abort waiting worker
+            r.lpush(f"scan:{scan_id}:decision", "abort")
+
     return StreamingResponse(
-        manager.stream_output(),
-        media_type="text/event-stream",
+        stream(),
+        media_type="text/plain",
         headers={
             "X-Accel-Buffering": "no",
             "Cache-Control": "no-cache",
@@ -443,22 +452,29 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     )
 
 
-class ApproveRequest(BaseModel):
-    approved_resources: list[str] | None = None
-
 @app.post("/api/approve")
-def approve_remediation(body: ApproveRequest = ApproveRequest(), user: dict = Depends(get_current_user)):
-    manager = _get_manager(user["sub"])
-    if manager.send_approval(body.approved_resources):
-        return {"status": "approved"}
-    raise HTTPException(status_code=400, detail="No agent waiting for approval")
+def approve_remediation(body: ApproveRequest, user: dict = Depends(get_current_user)):
+    owner = r.get(f"scan:{body.scan_id}:owner")
+    if owner != user["sub"]:
+        raise HTTPException(status_code=403, detail="Not your scan")
+
+    payload = "approve"
+    if body.approved_resources:
+        payload = "approve:" + ",".join(body.approved_resources)
+
+    # lpush unblocks the worker's blpop immediately
+    r.lpush(f"scan:{body.scan_id}:decision", payload)
+    return {"status": "approved"}
 
 
 @app.post("/api/stop")
-def stop_process(user: dict = Depends(get_current_user)):
-    manager = _get_manager(user["sub"])
-    if manager.is_running and manager.process:
-        manager.process.terminate()
+def stop_process(scan_id: str, user: dict = Depends(get_current_user)):
+    owner = r.get(f"scan:{scan_id}:owner")
+    if owner != user["sub"]:
+        raise HTTPException(status_code=403, detail="Not your scan")
+    # Push abort signal — worker's blpop picks it up if waiting, otherwise scan ends naturally
+    r.lpush(f"scan:{scan_id}:decision", "abort")
+    r.set(f"scan:{scan_id}:status", "aborted", ex=7200)
     return {"status": "stopped"}
 
 
