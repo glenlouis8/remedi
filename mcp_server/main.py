@@ -490,14 +490,25 @@ def enforce_imdsv2(instance_id: str) -> str:
     REMEDIATION: Enforces IMDSv2.
     """
     ec2 = get_boto_client("ec2")
-    try:
-        ec2.modify_instance_metadata_options(
-            InstanceId=instance_id, HttpTokens="required", HttpEndpoint="enabled"
-        )
-        update_status("check_ec2","SAFE")
-        return f"SUCCESS: IMDSv2 enforced on {instance_id}."
-    except Exception as e:
-        return f"ERROR: Failed to enforce IMDSv2 on {instance_id}: {str(e)}"
+    # Metadata options can be set on a running OR stopped instance, but the API
+    # rejects calls during the transient 'stopping'/'pending' states with
+    # IncorrectInstanceState. When the same instance is also being quarantined
+    # (stop_instance) in parallel, retry through the transition.
+    last_err = None
+    for attempt in range(30):
+        try:
+            ec2.modify_instance_metadata_options(
+                InstanceId=instance_id, HttpTokens="required", HttpEndpoint="enabled"
+            )
+            update_status("check_ec2", "SAFE")
+            return f"SUCCESS: IMDSv2 enforced on {instance_id}."
+        except Exception as e:
+            last_err = e
+            if "IncorrectInstanceState" in str(e):
+                time.sleep(2)
+                continue
+            break
+    return f"ERROR: Failed to enforce IMDSv2 on {instance_id}: {str(last_err)}"
 
 
 @mcp.tool()

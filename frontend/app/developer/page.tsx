@@ -48,10 +48,12 @@ export default function DeveloperPage() {
 
           {/* Identity */}
           <div className="flex items-center gap-5">
-            <div className="w-14 h-14 rounded-xl flex items-center justify-center text-xl font-bold text-violet-300 shrink-0"
-              style={{ background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.2)' }}>
-              G
-            </div>
+            <img
+              src="/glen.jpg"
+              alt="Glen Louis"
+              className="w-14 h-14 rounded-xl object-cover shrink-0"
+              style={{ border: '1px solid rgba(139,92,246,0.2)' }}
+            />
             <div>
               <h1 className="text-xl font-semibold text-white">Glen Louis</h1>
               <p className="text-sm text-slate-500 mt-0.5">AI Engineer</p>

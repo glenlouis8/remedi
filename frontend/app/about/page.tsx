@@ -331,8 +331,8 @@ export default function AboutPage() {
                 {[
                   {
                     Icon: Server,
-                    label: 'FastAPI + streaming',
-                    detail: 'The backend serves a StreamingResponse for each scan — the frontend reads it line by line. Structured events prefixed with [SCAN], [EXEC], and [ACTION_REQUIRED] drive the real-time UI without WebSockets.',
+                    label: 'FastAPI + Celery + Redis',
+                    detail: 'Each scan runs in a Celery worker; the worker streams its output line by line into a Redis stream, and the backend relays that to the browser as a StreamingResponse. Structured events prefixed with [SCAN], [EXEC], and [ACTION_REQUIRED] drive the real-time UI without WebSockets.',
                   },
                   {
                     Icon: Shield,
@@ -341,7 +341,7 @@ export default function AboutPage() {
                   },
                   {
                     Icon: Database,
-                    label: 'PostgreSQL on Railway',
+                    label: 'PostgreSQL on Supabase',
                     detail: 'Scan history, remediation logs, compliance check statuses, and encrypted credentials all live in a single Postgres instance. Schema migrations run on startup via ALTER TABLE IF NOT EXISTS.',
                   },
                 ].map(({ Icon, label, detail }) => (

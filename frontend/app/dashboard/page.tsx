@@ -361,11 +361,16 @@ export default function Dashboard() {
               if (SERVICE_META[svc]) {
                 setActiveService(svc);
                 if (!localItems[svc]) localItems[svc] = [];
-                const alreadyHas = localItems[svc]!.some(i => i.resource === event.resource);
-                if (!alreadyHas) {
+                const existing = localItems[svc]!.find(i => i.resource === event.resource);
+                if (existing) {
+                  // Verifier re-emits resources it re-audited — trust the latest status
+                  // so a confirmed fix flips the card vulnerable → ok (a failed fix stays red).
+                  existing.status = event.status;
+                  if (event.msg) existing.msg = event.msg;
+                } else {
                   localItems[svc]!.push({ resource: event.resource, status: event.status, msg: event.msg ?? '' });
-                  setScanItems({ ...localItems });
                 }
+                setScanItems({ ...localItems });
                 if (event.status === 'vulnerable' && event.msg) {
                   localReasons[event.resource] = event.msg;
                 }
