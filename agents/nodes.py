@@ -610,6 +610,7 @@ def remediator_agent(state: AgentState):
         approved_resources = state.get("approved_resources")  # None = all approved
 
         tasks = []
+        seen = set()
         for match in pattern.finditer(summary):
             resource = match.group(1).strip()
             tool_name = match.group(2).strip()
@@ -619,6 +620,12 @@ def remediator_agent(state: AgentState):
             if approved_resources is not None and resource not in approved_resources:
                 print(f"[SKIP] {resource} not in approved list — skipping.")
                 continue
+            # Dedup: a repeated report line (LLM duplication) must not trigger the
+            # same fix twice. Run each (resource, tool) pair at most once.
+            if (resource, real_name) in seen:
+                print(f"[SKIP] {resource} -> {real_name} already queued — skipping duplicate.")
+                continue
+            seen.add((resource, real_name))
             tasks.append(
                 (resource, real_name, func, {arg_key: resource} if arg_key else {})
             )
