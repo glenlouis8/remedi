@@ -707,10 +707,14 @@ def verifier_agent(state: AgentState):
     system_msg = SystemMessage(
         content=(
             "You are a security verifier. Your job is to confirm that the remediation steps were successful.\n"
+            "The remediation report's SUCCESS lines are UNVERIFIED CLAIMS — never trust them. "
+            "You MUST independently re-audit every fixed resource by calling the audit tools. "
+            "Concluding without calling any tool is a verification failure.\n"
             "1. Read the remediation report carefully to identify exactly which resources were fixed.\n"
             "2. Re-run audit tools ONLY for those specific resources — do NOT scan anything else.\n"
             "   Only use resource names and IDs that appear in the remediation report.\n"
             "   Never invent or guess resource names.\n"
+            "   Do NOT output 'MISSION ACCOMPLISHED' until you have seen the audit tool results yourself.\n"
             "3. Use these criteria to determine if a resource is now clean:\n"
             "   - IAM user: no AdministratorAccess or PowerUserAccess policies attached\n"
             "   - S3 bucket: all four public access block flags are True\n"
@@ -755,6 +759,21 @@ def verifier_agent(state: AgentState):
     response = audit_llm.invoke([system_msg] + context)
 
     scan_id = state.get("scan_id", "UNKNOWN")
+
+    # Guard: the verifier must actually re-audit. If it claims success without
+    # ever running an audit tool (it shortcut by trusting the remediation
+    # report), reject the claim and force another pass.
+    audited = any(isinstance(m, ToolMessage) for m in context)
+    if not audited and not getattr(response, "tool_calls", None):
+        print("--- [VERIFIER] No audit tools run — forcing re-audit ---")
+        forced = SystemMessage(
+            content=(
+                "You did not call any audit tool. You CANNOT confirm anything "
+                "without re-auditing. Call the relevant audit tool now for each "
+                "resource named in the remediation report."
+            )
+        )
+        response = audit_llm.invoke([system_msg] + context + [forced])
 
     verified = "MISSION ACCOMPLISHED" in str(response.content)
     status = "COMPLETED" if verified else "FAILED"
