@@ -49,11 +49,17 @@ orchestrator → report_generator → safety_gate ─[your approval]─► remed
 ┌──────────────────────────────────────────────────┐
 │                   frontend/                       │
 └───────────────────┬──────────────────────────────┘
-                    │ HTTP / StreamingResponse
+                    │ HTTP / SSE
 ┌───────────────────▼──────────────────────────────┐
 │                  server.py                        │
-│           FastAPI · ProcessManager                │
-│   Clerk JWT auth · Fernet encryption · PostgreSQL │
+│         FastAPI · Clerk JWT auth                  │
+│   Fernet encryption · PostgreSQL · Redis cache    │
+└───────────────────┬──────────────────────────────┘
+                    │ Celery task dispatch (Redis broker)
+┌───────────────────▼──────────────────────────────┐
+│                  worker.py                        │
+│   Celery worker · spawns main.py per scan         │
+│   streams output over Redis pub/sub (XADD/XREAD)  │
 └───────────────────┬──────────────────────────────┘
                     │ subprocess (stdin/stdout)
 ┌───────────────────▼──────────────────────────────┐
@@ -71,21 +77,22 @@ orchestrator → report_generator → safety_gate ─[your approval]─► remed
 
 **Key design decisions:**
 
+- **Celery + Redis scan queue** — `/api/run-agent` hands each scan off to a Celery worker (`worker.py`) and returns immediately; FastAPI never blocks on a running scan. The worker spawns `main.py`, streams its stdout into a Redis stream (`scan:{id}:stream`), and blocks on a Redis list (`blpop`) while waiting for the human approval decision. `server.py` reads the stream via SSE for the frontend.
 - **MCP subprocess isolation** — all boto3 calls live in a separate process (`mcp_server/main.py`). The agent communicates via JSON-RPC over stdio (the Model Context Protocol). AWS credentials never touch the main process.
 - **Parallelism model** — the orchestrator fires all 8 specialist agents simultaneously via `ThreadPoolExecutor`. Tool calls within a single agent are sequential (the MCP pipe is single-threaded). The remediator also parallelizes — all approved fixes run concurrently.
 - **No LLM parse step in remediation** — the remediator regex-parses the report directly (`🔴 [CRITICAL] <resource> is vulnerable -> ACTION: I will call \`tool_name\``). No extra LLM call, no JSON, no latency.
 - **Token optimization** — the report generator receives only the auditor's final summary, not the full tool call history. Saves ~80% of tokens vs passing the entire message chain.
 - **Finding accumulation** — FINDING lines are collected across every LLM turn in the specialist loop, not just the final message. Prevents overcorrection where the protected-user clause caused the LLM to drop real findings from its summary.
-- **Langfuse tracing** — every scan is a Langfuse trace. Each specialist sub-agent, report generation, and remediation step appears as a span with token counts and latency.
+- **LangSmith tracing** — every scan attaches `scan_id`, `user_id`, `account_name` as run metadata. Each specialist sub-agent, report generation, and remediation step appears as a traced run with token counts and latency.
 
 ---
 
 ## Tech stack
 
-**Backend:** Python · FastAPI · LangGraph · Google Gemini · MCP · PostgreSQL · Clerk  
+**Backend:** Python · FastAPI · Celery · Redis · LangGraph · Google Gemini · MCP · PostgreSQL · Clerk  
 **Frontend:** Next.js 15 · TypeScript · Tailwind CSS · Clerk  
-**Observability:** Langfuse — traces every LLM call, tool call, and latency across the full agent pipeline  
-**Infrastructure:** Render · Vercel · Supabase · CloudFormation · Terraform (test env)
+**Observability:** LangSmith — traces every LLM call, tool call, and latency across the full agent pipeline  
+**Infrastructure:** Render · Vercel · Supabase · Upstash Redis · CloudFormation · Terraform (test env)
 
 ---
 
