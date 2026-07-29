@@ -24,6 +24,14 @@ r_blocking = redis.Redis.from_url(REDIS_URL, decode_responses=True, socket_timeo
 
 @celery_app.task(bind=True)
 def run_scan_task(self, scan_id: str, user_id: str, env: dict):
+    try:
+        _run_scan_task(scan_id, user_id, env)
+    finally:
+        # Release the concurrency slot reserved by /api/run-agent, no matter how we exit.
+        r.decr("active_scans")
+
+
+def _run_scan_task(scan_id: str, user_id: str, env: dict):
     proc_env = os.environ.copy()
     proc_env.update(env)
     proc_env["PYTHONUNBUFFERED"] = "1"
@@ -82,8 +90,10 @@ def run_scan_task(self, scan_id: str, user_id: str, env: dict):
     r.set(f"scan:{scan_id}:status", "done", ex=7200)
 
     # Bust cached metrics/history so dashboard shows fresh data after scan
-    r.delete(f"cache:{user_id}:metrics", f"cache:{user_id}:history")
-    r.delete("cache:status", "cache:compliance", "cache:breakdown")
+    r.delete(
+        f"cache:{user_id}:metrics", f"cache:{user_id}:history",
+        f"cache:{user_id}:status", f"cache:{user_id}:compliance", f"cache:{user_id}:breakdown",
+    )
 
     # Signal stream consumers that output is finished; expire stream after 2 hours
     r.xadd(f"scan:{scan_id}:stream", {"line": "__DONE__"})

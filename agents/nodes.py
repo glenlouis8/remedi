@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 from agents.state import AgentState
+from agents.patterns import REMEDIATION_LINE_PATTERN
 from agents.mcp_client import get_all_tools, get_tools_by_name
 from mcp_server.database import start_scan, update_scan, log_remediation, update_status
 import datetime
@@ -15,13 +16,13 @@ import datetime
 load_dotenv()
 
 
-def _get_protected_clause(for_report=False):
+def _get_protected_users() -> list[str]:
     protected_raw = os.environ.get("PROTECTED_IAM_USERS", "").strip()
-    protected_users = (
-        [u.strip() for u in protected_raw.split(",") if u.strip()]
-        if protected_raw
-        else []
-    )
+    return [u.strip() for u in protected_raw.split(",") if u.strip()] if protected_raw else []
+
+
+def _get_protected_clause(for_report=False):
+    protected_users = _get_protected_users()
     if not protected_users:
         return ""
     if for_report:
@@ -104,7 +105,8 @@ def _run_sub_agent(
     )
     accumulated_findings: list[str] = []
 
-    while True:
+    MAX_TOOL_ITERATIONS = 15
+    for _iteration in range(MAX_TOOL_ITERATIONS):
         for attempt in range(3):
             try:
                 response = llm_with_tools.invoke(messages)
@@ -160,6 +162,8 @@ def _run_sub_agent(
                         name=tc["name"],
                     )
                 )
+    else:
+        print(f"[{service}] Hit {MAX_TOOL_ITERATIONS}-iteration cap — stopping to avoid hanging the scan.")
 
     if isinstance(response.content, list):
         final_text = " ".join(
@@ -602,12 +606,9 @@ def remediator_agent(state: AgentState):
 
     try:
         # 5. REGEX PARSE — no LLM call, no JSON, no latency
-        import re
-
-        pattern = re.compile(
-            r'🔴 \[(?:CRITICAL|HIGH)\] (.+?) is vulnerable -> ACTION: I will call [`\'"]?(\w+)[`\'"]?'
-        )
+        pattern = REMEDIATION_LINE_PATTERN
         approved_resources = state.get("approved_resources")  # None = all approved
+        protected_users_lower = {u.lower() for u in _get_protected_users()}
 
         tasks = []
         seen = set()
@@ -617,6 +618,11 @@ def remediator_agent(state: AgentState):
             real_name = INTENT_MAP.get(tool_name, tool_name)
             func = FUNCTION_DISPATCH.get(real_name)
             arg_key = TOOL_ARG_MAP.get(real_name)
+            # Hard code-level gate — never trust the LLM-generated report alone
+            # to keep protected IAM users out of the remediation plan.
+            if real_name == "restrict_iam_user" and resource.lower() in protected_users_lower:
+                print(f"[SKIP] {resource} is a protected IAM user — refusing to remediate.")
+                continue
             if approved_resources is not None and resource not in approved_resources:
                 print(f"[SKIP] {resource} not in approved list — skipping.")
                 continue

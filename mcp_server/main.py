@@ -375,15 +375,15 @@ def audit_security_groups() -> list:
                 for ip_range in perm.get("IpRanges", []):
                     if ip_range.get("CidrIp") == "0.0.0.0/0":
                         port = perm.get("FromPort", "all")
-                    _emit("sg", sg["GroupId"], "vulnerable", f"port {port} open to 0.0.0.0/0")
-                    risky_groups.append(
-                            {
-                                "GroupId": sg["GroupId"],
-                                "Port": port,
-                                "Protocol": perm.get("IpProtocol"),
-                                "Risk": "OPEN TO WORLD (0.0.0.0/0)",
-                            }
-                        )
+                        _emit("sg", sg["GroupId"], "vulnerable", f"port {port} open to 0.0.0.0/0")
+                        risky_groups.append(
+                                {
+                                    "GroupId": sg["GroupId"],
+                                    "Port": port,
+                                    "Protocol": perm.get("IpProtocol"),
+                                    "Risk": "OPEN TO WORLD (0.0.0.0/0)",
+                                }
+                            )
         
         if not risky_groups:
             update_status("check_ssh", "SAFE")

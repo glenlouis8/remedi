@@ -45,11 +45,11 @@ CIS_CONTROLS = {
 }
 
 
-def get_cis_score() -> dict:
+def get_cis_score(user_id: str) -> dict:
     conn = get_connection()
     try:
         c = conn.cursor()
-        c.execute("SELECT id, status FROM compliance_checks")
+        c.execute("SELECT id, status FROM compliance_checks WHERE user_id = %s", (user_id,))
         rows = c.fetchall()
     finally:
         conn.close()

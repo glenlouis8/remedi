@@ -189,6 +189,11 @@ export default function Dashboard() {
   const iamPickerRef                        = useRef<HTMLDivElement>(null);
   const abortRef                            = useRef<AbortController | null>(null);
 
+  // Stop the SSE scan stream if the user navigates away mid-scan
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
+
   // Redirect to onboarding if no AWS credentials are connected
   useEffect(() => {
     const checkAccount = async () => {
@@ -347,11 +352,15 @@ export default function Dashboard() {
 
       const reader  = res.body.getReader();
       const decoder = new TextDecoder();
+      let buffer = '';
 
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        const lines = decoder.decode(value).split('\n').filter(Boolean);
+        buffer += decoder.decode(value, { stream: true });
+        const segments = buffer.split('\n');
+        buffer = segments.pop() ?? '';
+        const lines = segments.filter(Boolean);
 
         for (const raw of lines) {
           if (raw.startsWith('[SCAN] ')) {
@@ -514,13 +523,23 @@ export default function Dashboard() {
 
   const handleApprove = async () => {
     setScanState('remediating');
-    const token = await getToken();
-    const approved = Array.from(approvedItems);
-    await fetch(`${API}/api/approve`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scan_id: currentScanId, approved_resources: approved }),
-    });
+    try {
+      const token = await getToken();
+      const approved = Array.from(approvedItems);
+      const res = await fetch(`${API}/api/approve`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scan_id: currentScanId, approved_resources: approved }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setScanError(data.detail ?? 'Failed to approve remediation. Try again.');
+        setScanState('awaiting_approval');
+      }
+    } catch {
+      setScanError('Failed to approve remediation. Try again.');
+      setScanState('awaiting_approval');
+    }
   };
 
   const handleStop = async () => {

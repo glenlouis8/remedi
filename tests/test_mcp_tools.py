@@ -243,3 +243,59 @@ def test_audit_rds_detects_public_instance():
         isinstance(r, dict) and r.get("DBInstanceIdentifier") == "public-db" and r.get("PubliclyAccessible")
         for r in result
     )
+
+
+# --- LAMBDA ---
+# moto's extras ([cloudtrail,ec2,iam,logs,rds,s3]) don't cover Lambda, so these
+# use manual boto3 client mocks instead of @mock_aws.
+
+def _paginator(pages):
+    paginator = MagicMock()
+    paginator.paginate.return_value = pages
+    return paginator
+
+
+def test_audit_lambda_permissions_flags_admin_access():
+    lambda_client = MagicMock()
+    iam = MagicMock()
+    lambda_client.get_paginator.return_value = _paginator([
+        {"Functions": [{"FunctionName": "my-func", "Role": "arn:aws:iam::123456789012:role/my-role"}]}
+    ])
+    iam.get_paginator.side_effect = lambda name: {
+        "list_attached_role_policies": _paginator([
+            {"AttachedPolicies": [{"PolicyName": "AdministratorAccess", "PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess"}]}
+        ]),
+        "list_role_policies": _paginator([{"PolicyNames": []}]),
+    }[name]
+
+    with patch("mcp_server.main.get_boto_client", side_effect=lambda svc: {"lambda": lambda_client, "iam": iam}[svc]):
+        from mcp_server.main import audit_lambda_permissions
+        result = audit_lambda_permissions()
+
+    assert len(result) == 1
+    assert result[0]["OverPermissioned"] is True
+    assert "AdministratorAccess" in result[0]["Issues"][0]
+
+
+def test_remediate_lambda_role_detaches_admin_and_attaches_basic():
+    lambda_client = MagicMock()
+    iam = MagicMock()
+    lambda_client.get_function_configuration.return_value = {"Role": "arn:aws:iam::123456789012:role/my-role"}
+    iam.get_paginator.side_effect = lambda name: {
+        "list_attached_role_policies": _paginator([
+            {"AttachedPolicies": [{"PolicyName": "AdministratorAccess", "PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess"}]}
+        ]),
+        "list_role_policies": _paginator([{"PolicyNames": []}]),
+    }[name]
+
+    with patch("mcp_server.main.get_boto_client", side_effect=lambda svc: {"lambda": lambda_client, "iam": iam}[svc]):
+        from mcp_server.main import remediate_lambda_role
+        result = remediate_lambda_role("my-func")
+
+    assert "SUCCESS" in result
+    iam.detach_role_policy.assert_called_once_with(
+        RoleName="my-role", PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess"
+    )
+    iam.attach_role_policy.assert_called_once_with(
+        RoleName="my-role", PolicyArn="arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+    )

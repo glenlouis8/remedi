@@ -23,6 +23,11 @@ _ready = threading.Event()
 _tools: list = []
 _tools_by_name: dict = {}
 
+# The MCP server is a single stdio pipe — only one JSON-RPC call can be in
+# flight at a time or concurrent writes from the 8 parallel specialist
+# threads corrupt the stream. This lock serializes every tool call.
+_call_lock = threading.Lock()
+
 
 def _make_sync_tool(mcp_tool) -> StructuredTool:
     """
@@ -31,11 +36,14 @@ def _make_sync_tool(mcp_tool) -> StructuredTool:
     with LangGraph's synchronous ToolNode and the remediator's dispatch table.
     """
     def sync_run(**kwargs):
-        future = asyncio.run_coroutine_threadsafe(
-            mcp_tool.ainvoke(kwargs),
-            _loop,
-        )
-        result = future.result(timeout=60)
+        if not _thread.is_alive():
+            raise RuntimeError("MCP server connection is down — background loop thread has exited.")
+        with _call_lock:
+            future = asyncio.run_coroutine_threadsafe(
+                mcp_tool.ainvoke(kwargs),
+                _loop,
+            )
+            result = future.result(timeout=60)
         if isinstance(result, list):
             return " ".join(p.get("text", "") for p in result if isinstance(p, dict)).strip()
         return str(result)

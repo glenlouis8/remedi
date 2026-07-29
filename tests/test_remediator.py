@@ -1,9 +1,6 @@
-import re
 import pytest
 
-pattern = re.compile(
-    r'🔴 \[CRITICAL\] (.+?) is vulnerable -> ACTION: I will call [`\'"]?(\w+)[`\'"]?'
-)
+from agents.patterns import REMEDIATION_LINE_PATTERN as pattern
 
 TOOL_ARG_MAP = {
     "restrict_iam_user":             "user_name",
@@ -73,3 +70,8 @@ def test_zero_tasks_from_empty_string():
 def test_manual_review_line_not_parsed():
     report = "⚠️ [MANUAL] some-resource requires manual review — no tool available."
     assert pattern.findall(report) == []
+
+
+def test_high_severity_also_parses():
+    report = "🔴 [HIGH] my-bucket is vulnerable -> ACTION: I will call `remediate_s3`"
+    assert pattern.findall(report) == [("my-bucket", "remediate_s3")]

@@ -49,21 +49,71 @@ Resources:
               - logs:DescribeLogGroups
 
           # --- REMEDIATION (write) ---
-          - Sid: RemediRemediate
+
+          # IAM user cleanup: only ever detaches/deletes what a user already
+          # has and attaches exactly one fixed read-only policy — no way to
+          # grant broader access than that.
+          - Sid: RemediRestrictUser
             Effect: Allow
-            Resource: '*'
+            Resource: 'arn:aws:iam::*:user/*'
             Action:
-              - iam:AttachUserPolicy
               - iam:DetachUserPolicy
               - iam:DeleteUserPolicy
               - iam:ListGroupsForUser
               - iam:RemoveUserFromGroup
+
+          - Sid: RemediAttachReadOnly
+            Effect: Allow
+            Resource: 'arn:aws:iam::*:user/*'
+            Action:
+              - iam:AttachUserPolicy
+            Condition:
+              StringEquals:
+                iam:PolicyARN: 'arn:aws:iam::aws:policy/ReadOnlyAccess'
+
+          # Lambda role cleanup: detach/delete only, and the only policy this
+          # agent can ever attach is the fixed basic-execution-role policy —
+          # never something more privileged.
+          - Sid: RemediLambdaRoleCleanup
+            Effect: Allow
+            Resource: 'arn:aws:iam::*:role/*'
+            Action:
               - iam:DetachRolePolicy
-              - iam:AttachRolePolicy
               - iam:DeleteRolePolicy
+
+          - Sid: RemediAttachLambdaBasicExecution
+            Effect: Allow
+            Resource: 'arn:aws:iam::*:role/*'
+            Action:
+              - iam:AttachRolePolicy
+            Condition:
+              StringEquals:
+                iam:PolicyARN: 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+          # VPC flow-log delivery role: name-locked to AegisFlowLogRole so this
+          # agent can never create or pass an arbitrary role, and PassRole is
+          # further locked to the one AWS service that consumes it.
+          - Sid: RemediFlowLogRole
+            Effect: Allow
+            Resource: 'arn:aws:iam::*:role/AegisFlowLogRole'
+            Action:
               - iam:CreateRole
               - iam:PutRolePolicy
+              - iam:GetRole
+
+          - Sid: RemediFlowLogRolePassRole
+            Effect: Allow
+            Resource: 'arn:aws:iam::*:role/AegisFlowLogRole'
+            Action:
               - iam:PassRole
+            Condition:
+              StringEquals:
+                iam:PassedToService: 'vpc-flow-logs.amazonaws.com'
+
+          - Sid: RemediRemediate
+            Effect: Allow
+            Resource: '*'
+            Action:
               - s3:PutPublicAccessBlock
               - s3:CreateBucket
               - s3:PutBucketPolicy

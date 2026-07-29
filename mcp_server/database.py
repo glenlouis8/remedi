@@ -109,13 +109,27 @@ def init_db():
 
     c.execute('''
         CREATE TABLE IF NOT EXISTS compliance_checks (
-            id TEXT PRIMARY KEY,
-            user_id TEXT,
+            id TEXT NOT NULL,
+            user_id TEXT NOT NULL DEFAULT '',
             name TEXT,
             description TEXT,
             status TEXT
         )
     ''')
+    # Migration: backfill legacy global rows, then promote PK to (id, user_id)
+    c.execute("ALTER TABLE compliance_checks ALTER COLUMN user_id SET DEFAULT ''")
+    c.execute("UPDATE compliance_checks SET user_id = '' WHERE user_id IS NULL")
+    c.execute("ALTER TABLE compliance_checks ALTER COLUMN user_id SET NOT NULL")
+    c.execute("""
+        SELECT constraint_name FROM information_schema.table_constraints
+        WHERE table_name = 'compliance_checks' AND constraint_type = 'PRIMARY KEY' AND table_schema = 'public'
+    """)
+    pk_row = c.fetchone()
+    if pk_row and pk_row[0] != 'compliance_checks_pkey_composite':
+        c.execute(f"ALTER TABLE compliance_checks DROP CONSTRAINT {pk_row[0]}")
+        c.execute("ALTER TABLE compliance_checks ADD CONSTRAINT compliance_checks_pkey_composite PRIMARY KEY (id, user_id)")
+    elif not pk_row:
+        c.execute("ALTER TABLE compliance_checks ADD CONSTRAINT compliance_checks_pkey_composite PRIMARY KEY (id, user_id)")
 
     c.execute('''
         CREATE TABLE IF NOT EXISTS scans (
@@ -159,20 +173,10 @@ def init_db():
         )
     ''')
     
-    initial_data = [
-        ("check_iam", "IAM Privilege Escalation", "Ensures no unauthorized Admin users", "SAFE"),
-        ("check_s3", "S3 Data Leakage", "Prevents Public Access to Buckets", "SAFE"),
-        ("check_ssh", "Network Exposure", "Restricts Port 22 (SSH) Access", "SAFE"),
-        ("check_ec2", "Compute Hardening", "Enforces IMDSv2 & Encryption", "SAFE"),
-        ("check_vpc", "Network Logging", "Ensures VPC Flow Logs are Active", "SAFE"),
-        ("check_rds", "RDS Public Access", "Ensures no RDS databases are publicly accessible", "SAFE"),
-        ("check_lambda", "Lambda Over-Permission", "Ensures Lambda execution roles follow least privilege", "SAFE"),
-        ("check_cloudtrail", "CloudTrail Logging", "Ensures CloudTrail is enabled and actively logging", "SAFE"),
-    ]
-    
-    for row in initial_data:
-        c.execute("INSERT INTO compliance_checks (id, name, description, status) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING", row)
-    
+    # Per-user compliance rows are created on demand by update_status() as each
+    # user's scans run — no global seed data (compliance_checks is now scoped
+    # per (id, user_id), so there's no single "default" row to pre-populate).
+
     conn.commit()
     conn.close()
 
@@ -221,43 +225,53 @@ def update_scan(scan_id: str, **kwargs):
     finally:
         conn.close()
 
-def log_remediation(scan_id: str, resource_name: str, action: str, status: str, duration: float):
+def _env_user_id() -> str:
+    """User the current process is scanning on behalf of (set by server.py per scan)."""
+    return os.environ.get("REMEDI_USER_ID", "")
+
+def log_remediation(scan_id: str, resource_name: str, action: str, status: str, duration: float, user_id: str = None):
+    if user_id is None:
+        user_id = _env_user_id()
     conn = get_connection()
     try:
         c = conn.cursor()
-        c.execute("INSERT INTO remediation_logs (scan_id, resource_name, action, status, duration) VALUES (%s, %s, %s, %s, %s)",
-                  (scan_id, resource_name, action, status, duration))
+        c.execute("INSERT INTO remediation_logs (scan_id, user_id, resource_name, action, status, duration) VALUES (%s, %s, %s, %s, %s, %s)",
+                  (scan_id, user_id, resource_name, action, status, duration))
         conn.commit()
     finally:
         conn.close()
 
-def update_status(check_id: str, status: str):
+def update_status(check_id: str, status: str, user_id: str = None):
+    if user_id is None:
+        user_id = _env_user_id()
     conn = get_connection()
     try:
         c = conn.cursor()
-        print(f"[DB] Updating {check_id} -> {status}", file=sys.stderr)
-        c.execute("UPDATE compliance_checks SET status = %s WHERE id = %s", (status, check_id))
-        if c.rowcount == 0:
-            print(f"[DB] WARNING: Update failed. Check ID '{check_id}' not found in DB.", file=sys.stderr)
+        print(f"[DB] Updating {check_id} -> {status} (user={user_id})", file=sys.stderr)
+        c.execute("""
+            INSERT INTO compliance_checks (id, user_id, status)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (id, user_id) DO UPDATE SET status = EXCLUDED.status
+        """, (check_id, user_id, status))
         conn.commit()
     finally:
         conn.close()
 
-def get_all_status():
+def get_all_status(user_id: str):
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("SELECT * FROM compliance_checks")
+        cur.execute("SELECT * FROM compliance_checks WHERE user_id = %s", (user_id,))
         rows = [dict(row) for row in cur.fetchall()]
     finally:
         conn.close()
     return rows
 
-def reset_to_vulnerable():
+def reset_to_vulnerable(user_id: str):
     conn = get_connection()
     try:
         c = conn.cursor()
-        c.execute("UPDATE compliance_checks SET status = 'VULNERABLE'")
+        c.execute("UPDATE compliance_checks SET status = 'VULNERABLE' WHERE user_id = %s", (user_id,))
         conn.commit()
     finally:
         conn.close()
@@ -304,17 +318,17 @@ def get_scan_history(user_id: str | None = None):
         conn.close()
     return rows
 
-def get_remediation_breakdown():
-    """Returns count of remediations grouped by category."""
+def get_remediation_breakdown(user_id: str):
+    """Returns count of remediations grouped by category, for one user."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
             SELECT action, COUNT(*) as count
             FROM remediation_logs
-            WHERE status = 'SUCCESS'
+            WHERE status = 'SUCCESS' AND user_id = %s
             GROUP BY action
-        """)
+        """, (user_id,))
         rows = [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
@@ -336,17 +350,20 @@ def get_remediation_breakdown():
     return [{"category": k, "count": v} for k, v in totals.items()]
 
 
-def get_scan_detail(scan_id: str):
-    """Returns the full detail for one scan: audit summary + remediation log entries."""
+def get_scan_detail(scan_id: str, user_id: str):
+    """Returns the full detail for one scan: audit summary + remediation log entries.
+    Scoped to user_id so one user can't pull another user's scan by guessing the ID."""
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
             SELECT id, start_time, end_time, findings_count, remediations_count,
                    status, verified, audit_summary
-            FROM scans WHERE id = %s
-        """, (scan_id,))
+            FROM scans WHERE id = %s AND user_id = %s
+        """, (scan_id, user_id))
         scan = dict(cur.fetchone() or {})
+        if not scan:
+            return scan
 
         cur.execute("""
             SELECT resource_name, action, status, duration, timestamp

@@ -244,21 +244,25 @@ def get_protected_users_route(account_name: str = "Default", user: dict = Depend
 
 @app.get("/api/compliance")
 def compliance_score(user: dict = Depends(get_current_user)):
-    cached = _cache_get("cache:compliance")
+    user_id = user["sub"]
+    cache_key = f"cache:{user_id}:compliance"
+    cached = _cache_get(cache_key)
     if cached is not None:
         return cached
-    data = get_cis_score()
-    _cache_set("cache:compliance", data, ttl=60)
+    data = get_cis_score(user_id)
+    _cache_set(cache_key, data, ttl=60)
     return data
 
 
 @app.get("/api/status")
 def get_status(user: dict = Depends(get_current_user)):
-    cached = _cache_get("cache:status")
+    user_id = user["sub"]
+    cache_key = f"cache:{user_id}:status"
+    cached = _cache_get(cache_key)
     if cached is not None:
         return JSONResponse(content=cached)
-    data = get_all_status()
-    _cache_set("cache:status", data, ttl=60)
+    data = get_all_status(user_id)
+    _cache_set(cache_key, data, ttl=60)
     return JSONResponse(content=data)
 
 
@@ -348,7 +352,7 @@ def get_history(user: dict = Depends(get_current_user)):
 
 @app.get("/api/metrics/history/{scan_id}")
 def get_scan_detail_endpoint(scan_id: str, user: dict = Depends(get_current_user)):
-    detail = get_scan_detail(scan_id)
+    detail = get_scan_detail(scan_id, user["sub"])
     if not detail:
         raise HTTPException(status_code=404, detail="Scan not found")
     return detail
@@ -356,11 +360,13 @@ def get_scan_detail_endpoint(scan_id: str, user: dict = Depends(get_current_user
 
 @app.get("/api/metrics/breakdown")
 def get_breakdown(user: dict = Depends(get_current_user)):
-    cached = _cache_get("cache:breakdown")
+    user_id = user["sub"]
+    cache_key = f"cache:{user_id}:breakdown"
+    cached = _cache_get(cache_key)
     if cached is not None:
         return cached
-    data = get_remediation_breakdown()
-    _cache_set("cache:breakdown", data, ttl=60)
+    data = get_remediation_breakdown(user_id)
+    _cache_set(cache_key, data, ttl=60)
     return data
 
 
@@ -373,9 +379,10 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     if not creds:
         raise HTTPException(status_code=400, detail="No AWS account connected. Please complete onboarding first.")
 
-    # Count active scans via Redis
-    active = int(r.get("active_scans") or 0)
-    if active >= MAX_CONCURRENT_SCANS:
+    # Reserve a concurrency slot atomically; back it out if we're over the cap.
+    active = r.incr("active_scans")
+    if active > MAX_CONCURRENT_SCANS:
+        r.decr("active_scans")
         raise HTTPException(status_code=503, detail="Server is busy with other scans. Try again in a few minutes.")
 
     used = count_scans_today(user_id, body.account_name or "Default")
