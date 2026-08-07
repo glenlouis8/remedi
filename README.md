@@ -141,7 +141,7 @@ AWS credentials are never stored in plaintext:
 
 ## Testing
 
-25 tests covering the critical paths — no external services required.
+28 tests covering the critical paths — no external services required.
 
 ```bash
 # Install test dependencies
@@ -177,6 +177,8 @@ uv add pytest "moto[s3,iam,ec2,rds,cloudtrail,logs]" httpx --dev
 | `test_audit_ec2_finds_running_instances` | Auditor enumerates running EC2 instances correctly |
 | `test_remediate_rds_disables_public_access` | Remediating a public RDS instance sets `PubliclyAccessible = false` |
 | `test_audit_rds_detects_public_instance` | Auditor flags an RDS instance with public access enabled |
+| `test_audit_lambda_permissions_flags_admin_access` | Auditor flags a Lambda function whose execution role has `AdministratorAccess` attached |
+| `test_remediate_lambda_role_detaches_admin_and_attaches_basic` | Remediating an over-privileged Lambda role detaches admin access and attaches `AWSLambdaBasicExecutionRole` |
 
 **`tests/test_remediator.py`** — Report parser (regex that extracts remediation tasks from the AI report)
 
@@ -190,8 +192,9 @@ uv add pytest "moto[s3,iam,ec2,rds,cloudtrail,logs]" httpx --dev
 | `test_resource_name_with_dots` | Resource names with dots (e.g. `prod.db`) parse without error |
 | `test_zero_tasks_from_empty_string` | An empty report string produces zero tasks without crashing |
 | `test_manual_review_line_not_parsed` | Lines marked for manual review are not mistakenly queued as automated tasks |
+| `test_high_severity_also_parses` | A `🔴 [HIGH]` line (not just `[CRITICAL]`) also parses into a remediation task |
 
-**Result: 24 passed, 1 xfailed (expected — moto limitation)**
+**Result: 27 passed, 1 xfailed (expected — moto limitation)**
 
 ---
 
