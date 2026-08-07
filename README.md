@@ -81,7 +81,7 @@ orchestrator → report_generator → safety_gate ─[your approval]─► remed
 - **MCP subprocess isolation** — all boto3 calls live in a separate process (`mcp_server/main.py`). The agent communicates via JSON-RPC over stdio (the Model Context Protocol). AWS credentials never touch the main process.
 - **Parallelism model** — the orchestrator fires all 8 specialist agents simultaneously via `ThreadPoolExecutor`. Tool calls within a single agent are sequential (the MCP pipe is single-threaded). The remediator also parallelizes — all approved fixes run concurrently.
 - **No LLM parse step in remediation** — the remediator regex-parses the report directly (`🔴 [CRITICAL] <resource> is vulnerable -> ACTION: I will call \`tool_name\``). No extra LLM call, no JSON, no latency.
-- **Token optimization** — the report generator receives only the auditor's final summary, not the full tool call history. Saves ~80% of tokens vs passing the entire message chain.
+- **Token optimization** — the report generator receives only the auditor's final summary, not the full tool call history. Saves ~80% of tokens vs passing the entire message chain, which is what brings a full scan down to **~$0.02** (see [Cost](#cost)).
 - **Finding accumulation** — FINDING lines are collected across every LLM turn in the specialist loop, not just the final message. Prevents overcorrection where the protected-user clause caused the LLM to drop real findings from its summary.
 - **LangSmith tracing** — every scan attaches `scan_id`, `user_id`, `account_name` as run metadata. Each specialist sub-agent, report generation, and remediation step appears as a traced run with token counts and latency.
 
@@ -116,6 +116,21 @@ Every check maps to a CIS AWS Foundations Benchmark control. The dashboard track
 | 5.2 | No security groups with unrestricted access |
 | 5.4 | Lambda execution roles follow least privilege |
 | 5.6 | EC2 instances use IMDSv2 and encrypted volumes |
+
+---
+
+## Cost
+
+**~$0.02 per full scan** — 8 specialist agents, report generation, remediation, and verification, end to end.
+
+The figure is read off LangSmith, which records token counts per traced run. Every scan tags `scan_id`, `user_id`, and `account_name`, so a single scan's cost is the sum of its runs rather than an estimate spread over a billing period.
+
+Two decisions do most of the work:
+
+- **The report generator gets the auditor's summary, not the transcript.** Passing the full tool-call history of 8 agents into the report step is the obvious implementation and roughly 5x the tokens. Handing over only each agent's final structured summary is the single biggest saving, ~80% on that step.
+- **Remediation uses no LLM at all.** The report format is locked, so the remediator regex-parses it into a task list. An LLM parse step here would add cost and latency to buy nothing, since the input is already deterministic.
+
+The verifier is the one place that still needs an LLM, because AWS API responses vary in shape and a regex cannot reliably read them.
 
 ---
 
