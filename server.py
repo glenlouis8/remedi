@@ -379,12 +379,6 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     if not creds:
         raise HTTPException(status_code=400, detail="No AWS account connected. Please complete onboarding first.")
 
-    # Reserve a concurrency slot atomically; back it out if we're over the cap.
-    active = r.incr("active_scans")
-    if active > MAX_CONCURRENT_SCANS:
-        r.decr("active_scans")
-        raise HTTPException(status_code=503, detail="Server is busy with other scans. Try again in a few minutes.")
-
     used = count_scans_today(user_id, body.account_name or "Default")
     if used >= 3:
         raise HTTPException(status_code=429, detail="Scan limit reached: 3 scans per account per day. Resets at midnight.")
@@ -413,11 +407,22 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
 
     scan_id = f"SCAN-{uuid.uuid4().hex[:8].upper()}"
 
-    # Mark as queued before dispatch so stream() knows to keep waiting
-    r.set(f"scan:{scan_id}:status", "queued", ex=7200)
+    # Reserve a global concurrency slot LAST — after every check that can reject
+    # or raise — so a rejected request never leaks a slot. The worker's
+    # `finally: r.decr` releases it when the scan finishes.
+    active = r.incr("active_scans")
+    if active > MAX_CONCURRENT_SCANS:
+        r.decr("active_scans")
+        raise HTTPException(status_code=503, detail="Server is busy with other scans. Try again in a few minutes.")
 
-    # Hand off to Celery worker — FastAPI is now free
-    run_scan_task.delay(scan_id, user_id, env)
+    try:
+        # Mark as queued before dispatch so stream() knows to keep waiting
+        r.set(f"scan:{scan_id}:status", "queued", ex=7200)
+        # Hand off to Celery worker — FastAPI is now free
+        run_scan_task.delay(scan_id, user_id, env)
+    except Exception:
+        r.decr("active_scans")
+        raise HTTPException(status_code=503, detail="Could not start scan. Try again in a few minutes.")
 
     def stream():
         stream_key = f"scan:{scan_id}:stream"
