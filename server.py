@@ -76,6 +76,18 @@ for i in range(max_retries):
         time.sleep(2)
 
 
+# --- RESET CONCURRENCY COUNTER ---
+# Single-dyno deploy: on boot nothing is running yet, so any leftover value in
+# `active_scans` is a leak from a previous process (a SIGKILL on redeploy/OOM
+# skips the worker's `finally: r.decr`). Clear it so a stale count can't wedge
+# the server into a permanent "busy" state.
+try:
+    r.set("active_scans", 0)
+    print("✅ active_scans reset to 0.")
+except Exception as e:
+    print(f"⚠️  Could not reset active_scans on startup: {e}")
+
+
 # --- CREDENTIAL EXPIRY (30 min inactivity) ---
 def _credential_purge_loop():
     while True:
