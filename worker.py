@@ -21,6 +21,25 @@ r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 # Separate connection for blpop — no socket timeout so it can block up to 1800s
 r_blocking = redis.Redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=None)
 
+# Decrement active_scans but never below 0. A stale key — the server's boot-time
+# reset, or Redis eviction — must not push the counter negative, which would
+# silently disable the MAX_CONCURRENT_SCANS cap.
+_RELEASE_SLOT_LUA = """
+local v = tonumber(redis.call('get', KEYS[1]) or '0')
+if v <= 0 then
+  redis.call('set', KEYS[1], 0)
+  return 0
+end
+return redis.call('decr', KEYS[1])
+"""
+
+
+def _release_scan_slot():
+    try:
+        r.eval(_RELEASE_SLOT_LUA, 1, "active_scans")
+    except Exception as exc:
+        print(f"[worker] could not release scan slot: {exc}", flush=True)
+
 
 @celery_app.task(bind=True)
 def run_scan_task(self, scan_id: str, user_id: str, env: dict):
@@ -28,7 +47,7 @@ def run_scan_task(self, scan_id: str, user_id: str, env: dict):
         _run_scan_task(scan_id, user_id, env)
     finally:
         # Release the concurrency slot reserved by /api/run-agent, no matter how we exit.
-        r.decr("active_scans")
+        _release_scan_slot()
 
 
 def _run_scan_task(scan_id: str, user_id: str, env: dict):
