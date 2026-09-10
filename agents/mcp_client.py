@@ -8,6 +8,7 @@ from the main thread (required for LangGraph's synchronous ToolNode).
 """
 
 import asyncio
+import concurrent.futures
 import os
 import sys
 import threading
@@ -28,6 +29,13 @@ _tools_by_name: dict = {}
 # threads corrupt the stream. This lock serializes every tool call.
 _call_lock = threading.Lock()
 
+# Set if a tool call ever times out. A timed-out coroutine keeps running on
+# _loop and may still write its half-finished JSON-RPC frame to the pipe, so the
+# session can no longer be trusted. Once set, every further call fails fast
+# instead of interleaving with the orphaned one. (The process is per-scan, so a
+# broken session just fails this scan; the next scan gets a fresh subprocess.)
+_session_broken = threading.Event()
+
 
 def _make_sync_tool(mcp_tool) -> StructuredTool:
     """
@@ -38,12 +46,23 @@ def _make_sync_tool(mcp_tool) -> StructuredTool:
     def sync_run(**kwargs):
         if not _thread.is_alive():
             raise RuntimeError("MCP server connection is down — background loop thread has exited.")
+        if _session_broken.is_set():
+            raise RuntimeError(
+                "MCP session is broken after an earlier tool-call timeout — this scan cannot continue."
+            )
         with _call_lock:
             future = asyncio.run_coroutine_threadsafe(
                 mcp_tool.ainvoke(kwargs),
                 _loop,
             )
-            result = future.result(timeout=60)
+            try:
+                result = future.result(timeout=60)
+            except concurrent.futures.TimeoutError:
+                future.cancel()  # best-effort — try to stop it writing to the pipe
+                _session_broken.set()
+                raise RuntimeError(
+                    f"MCP tool '{mcp_tool.name}' timed out after 60s; MCP session marked broken."
+                )
         if isinstance(result, list):
             return " ".join(p.get("text", "") for p in result if isinstance(p, dict)).strip()
         return str(result)
