@@ -287,7 +287,7 @@ def audit_vpc_network() -> list:
             )
         return network_findings
     except Exception as e:
-        return [f"Network Audit Error: {str(e)}"]
+        return [{"error": f"Network Audit Error: {str(e)}"}]
 
 
 @mcp.tool()
@@ -403,7 +403,7 @@ def audit_security_groups() -> list:
             return ["No risky Security Groups found. System is SAFE."]
             
     except Exception as e:
-        return [f"Error auditing SGs: {str(e)}"]
+        return [{"error": f"Error auditing SGs: {str(e)}"}]
     return risky_groups if risky_groups else ["No risky Security Groups found."]
 
 
@@ -501,7 +501,7 @@ def audit_ec2_vulnerabilities() -> list:
                 )
         return findings if findings else ["No running instances found."]
     except Exception as e:
-        return [f"Audit Error: {str(e)}"]
+        return [{"error": f"Audit Error: {str(e)}"}]
 
 
 @mcp.tool()
@@ -584,7 +584,7 @@ def audit_rds_instances() -> list:
             update_status("check_rds", "SAFE")
         return findings
     except Exception as e:
-        return [f"RDS Audit Error: {str(e)}"]
+        return [{"error": f"RDS Audit Error: {str(e)}"}]
 
 
 @mcp.tool()
@@ -679,7 +679,7 @@ def audit_lambda_permissions() -> list:
             update_status("check_lambda", "SAFE")
         return findings
     except Exception as e:
-        return [f"Lambda Audit Error: {str(e)}"]
+        return [{"error": f"Lambda Audit Error: {str(e)}"}]
 
 
 @mcp.tool()
@@ -765,7 +765,7 @@ def audit_cloudtrail_logging() -> list:
             update_status("check_cloudtrail", "SAFE")
         return findings
     except Exception as e:
-        return [f"CloudTrail Audit Error: {str(e)}"]
+        return [{"error": f"CloudTrail Audit Error: {str(e)}"}]
 
 
 @mcp.tool()
