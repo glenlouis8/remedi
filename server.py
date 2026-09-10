@@ -20,7 +20,8 @@ from remedi_platform.auth import get_current_user
 from remedi_platform.accounts import (
     save_aws_credentials, get_aws_credentials, has_aws_account,
     delete_aws_credentials, list_aws_accounts, count_aws_accounts,
-    save_protected_users, get_protected_users,
+    save_protected_users, get_protected_users, seal_json,
+    CredentialDecryptError, AccountLimitError,
 )
 from remedi_platform.compliance import get_cis_score
 from worker import celery_app, run_scan_task
@@ -76,6 +77,18 @@ for i in range(max_retries):
         time.sleep(2)
 
 
+# --- RESET CONCURRENCY COUNTER ---
+# Single-dyno deploy: on boot nothing is running yet, so any leftover value in
+# `active_scans` is a leak from a previous process (a SIGKILL on redeploy/OOM
+# skips the worker's `finally: r.decr`). Clear it so a stale count can't wedge
+# the server into a permanent "busy" state.
+try:
+    r.set("active_scans", 0)
+    print("✅ active_scans reset to 0.")
+except Exception as e:
+    print(f"⚠️  Could not reset active_scans on startup: {e}")
+
+
 # --- CREDENTIAL EXPIRY (30 min inactivity) ---
 def _credential_purge_loop():
     while True:
@@ -123,7 +136,10 @@ def connect_aws(creds: AWSCredentials, user: dict = Depends(get_current_user)):
     is_new = not any(a["account_name"] == creds.account_name for a in accounts)
     if is_new and existing >= 3:
         raise HTTPException(status_code=400, detail="Maximum of 3 AWS accounts allowed per user")
-    save_aws_credentials(user_id, creds.account_name.strip(), creds.access_key, creds.secret_key)
+    try:
+        save_aws_credentials(user_id, creds.account_name.strip(), creds.access_key, creds.secret_key)
+    except AccountLimitError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return {"status": "connected", "account_name": creds.account_name.strip()}
 
 
@@ -204,7 +220,10 @@ def delete_user(user: dict = Depends(get_current_user)):
 @app.get("/api/iam/users")
 def list_iam_users(account_name: str = "Default", user: dict = Depends(get_current_user)):
     import boto3, botocore.exceptions
-    creds = get_aws_credentials(user["sub"], account_name)
+    try:
+        creds = get_aws_credentials(user["sub"], account_name)
+    except CredentialDecryptError:
+        raise HTTPException(status_code=409, detail="Stored AWS credentials could not be read. Please reconnect your AWS account.")
     if not creds:
         raise HTTPException(status_code=400, detail="No AWS account connected.")
     try:
@@ -375,15 +394,12 @@ MAX_CONCURRENT_SCANS = 3
 @app.post("/api/run-agent")
 def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     user_id = user["sub"]
-    creds = get_aws_credentials(user_id, body.account_name)
+    try:
+        creds = get_aws_credentials(user_id, body.account_name)
+    except CredentialDecryptError:
+        raise HTTPException(status_code=409, detail="Stored AWS credentials could not be read. Please reconnect your AWS account.")
     if not creds:
         raise HTTPException(status_code=400, detail="No AWS account connected. Please complete onboarding first.")
-
-    # Reserve a concurrency slot atomically; back it out if we're over the cap.
-    active = r.incr("active_scans")
-    if active > MAX_CONCURRENT_SCANS:
-        r.decr("active_scans")
-        raise HTTPException(status_code=503, detail="Server is busy with other scans. Try again in a few minutes.")
 
     used = count_scans_today(user_id, body.account_name or "Default")
     if used >= 3:
@@ -413,24 +429,46 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
 
     scan_id = f"SCAN-{uuid.uuid4().hex[:8].upper()}"
 
-    # Mark as queued before dispatch so stream() knows to keep waiting
-    r.set(f"scan:{scan_id}:status", "queued", ex=7200)
+    # Reserve a global concurrency slot LAST — after every check that can reject
+    # or raise — so a rejected request never leaks a slot. The worker's
+    # `finally: r.decr` releases it when the scan finishes.
+    active = r.incr("active_scans")
+    if active > MAX_CONCURRENT_SCANS:
+        r.decr("active_scans")
+        raise HTTPException(status_code=503, detail="Server is busy with other scans. Try again in a few minutes.")
 
-    # Hand off to Celery worker — FastAPI is now free
-    run_scan_task.delay(scan_id, user_id, env)
+    try:
+        # Mark as queued + record owner before dispatch so stream() keeps waiting
+        # and /api/stop|/api/approve work even while the scan is still queued.
+        r.set(f"scan:{scan_id}:status", "queued", ex=7200)
+        r.set(f"scan:{scan_id}:owner", user_id, ex=7200)
+        # Hand the credentials + config to the worker via a short-lived encrypted
+        # Redis key, NOT as a Celery task arg — task args sit in plaintext in the
+        # broker queue and leak into any task-failure traceback.
+        r.set(f"scan:{scan_id}:env", seal_json(env), ex=7200)
+        # Hand off to Celery worker — FastAPI is now free
+        run_scan_task.delay(scan_id, user_id)
+    except Exception:
+        r.decr("active_scans")
+        raise HTTPException(status_code=503, detail="Could not start scan. Try again in a few minutes.")
 
     def stream():
         stream_key = f"scan:{scan_id}:stream"
         last_id = "0"  # read from the very beginning — catches messages published before subscribe
+        consecutive_errors = 0
         try:
             while True:
                 try:
                     results = r_stream.xread({stream_key: last_id}, block=5000, count=100)
+                    consecutive_errors = 0
                 except Exception:
                     status = r.get(f"scan:{scan_id}:status")
                     if status in ("done", "aborted"):
                         return
-                    # SSE comment — keeps Render's proxy from buffering/closing on errors
+                    consecutive_errors += 1
+                    if consecutive_errors > 60:  # ~1 min of solid Redis failure
+                        return
+                    time.sleep(1)  # back off — don't hot-loop on a broken connection
                     yield ": heartbeat\n"
                     continue
                 if results:
@@ -449,8 +487,17 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
                     # SSE comment — keeps Render's proxy from buffering while waiting for output
                     yield ": heartbeat\n"
         except GeneratorExit:
-            # client disconnected (tab closed / refresh) — abort waiting worker
-            r.lpush(f"scan:{scan_id}:decision", "abort")
+            # Client disconnected (tab closed / refresh). Signal abort while the
+            # scan is queued, discovering, or waiting at the gate. Post-approval
+            # the worker has already drained the decision list, so a late abort
+            # here is just a TTL'd unread key — not worth a separate status.
+            try:
+                status = r.get(f"scan:{scan_id}:status")
+                if status in ("queued", "running", "waiting_approval"):
+                    r.lpush(f"scan:{scan_id}:decision", "abort")
+                    r.expire(f"scan:{scan_id}:decision", 7200)
+            except Exception:
+                pass
 
     return StreamingResponse(
         stream(),
@@ -469,8 +516,19 @@ def approve_remediation(body: ApproveRequest, user: dict = Depends(get_current_u
     if owner != user["sub"]:
         raise HTTPException(status_code=403, detail="Not your scan")
 
+    status = r.get(f"scan:{body.scan_id}:status")
+    if status in (None, "done", "aborted"):
+        raise HTTPException(status_code=409, detail="This scan is not awaiting approval.")
+
     payload = "approve"
     if body.approved_resources:
+        # The payload is newline-delimited into the scan subprocess's stdin and
+        # comma-split there — reject only the two chars that break that framing.
+        # (Resource labels come from the LLM report and may contain spaces, '@',
+        # '+', etc. — those are fine.)
+        for res in body.approved_resources:
+            if not res or len(res) > 256 or "\n" in res or "\r" in res or "," in res:
+                raise HTTPException(status_code=400, detail=f"Invalid resource identifier: {res!r}")
         payload = "approve:" + ",".join(body.approved_resources)
 
     # lpush unblocks the worker's blpop immediately

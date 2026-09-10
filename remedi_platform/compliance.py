@@ -54,14 +54,16 @@ def get_cis_score(user_id: str) -> dict:
     finally:
         conn.close()
 
+    row_status = {r[0]: r[1] for r in rows}
+
+    # Iterate the fixed control set — not just the rows that happen to exist — so
+    # a control that was never written (new user, or a scan that errored before
+    # writing statuses) counts as not-passing instead of being dropped from the
+    # denominator and inflating the percentage.
     controls = []
     passing = 0
-
-    for row in rows:
-        check_id, status = row[0], row[1]
-        meta = CIS_CONTROLS.get(check_id)
-        if not meta:
-            continue
+    for check_id, meta in CIS_CONTROLS.items():
+        status = row_status.get(check_id, "UNKNOWN")
         is_passing = status == "SAFE"
         if is_passing:
             passing += 1
@@ -74,12 +76,11 @@ def get_cis_score(user_id: str) -> dict:
             "passing": is_passing,
         })
 
-    total = len(controls)
-    score = passing
-    percentage = int((passing / total) * 100) if total > 0 else 0
+    total = len(CIS_CONTROLS)
+    percentage = int((passing / total) * 100)
 
     return {
-        "score": score,
+        "score": passing,
         "total": total,
         "percentage": percentage,
         "controls": controls,

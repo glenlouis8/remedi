@@ -160,6 +160,54 @@ def test_revoke_idempotent_when_already_clean():
 
 
 @mock_aws
+def test_revoke_preserves_peer_sg_rule_on_shared_port():
+    """Revoking a 0.0.0.0/0 rule must not tear down a peer-SG rule on another port."""
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    target = ec2.create_security_group(GroupName="app", Description="app")["GroupId"]
+    peer = ec2.create_security_group(GroupName="lb", Description="lb")["GroupId"]
+    ec2.authorize_security_group_ingress(
+        GroupId=target,
+        IpPermissions=[
+            {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22,
+             "IpRanges": [{"CidrIp": "0.0.0.0/0"}]},
+            {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443,
+             "UserIdGroupPairs": [{"GroupId": peer}]},
+        ],
+    )
+
+    from mcp_server.main import revoke_security_group_ingress
+    assert "SUCCESS" in revoke_security_group_ingress(target)
+
+    rules = ec2.describe_security_groups(GroupIds=[target])["SecurityGroups"][0]["IpPermissions"]
+    assert not any(
+        ip.get("CidrIp") == "0.0.0.0/0" for r in rules for ip in r.get("IpRanges", [])
+    )
+    # the peer-SG rule on 443 must survive
+    assert any(
+        pair.get("GroupId") == peer for r in rules for pair in r.get("UserIdGroupPairs", [])
+    )
+
+
+@mock_aws
+def test_audit_security_groups_flags_ipv6_open_world():
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    sg = ec2.create_security_group(GroupName="v6-sg", Description="v6")
+    ec2.authorize_security_group_ingress(
+        GroupId=sg["GroupId"],
+        IpPermissions=[{
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "Ipv6Ranges": [{"CidrIpv6": "::/0"}],
+        }],
+    )
+
+    from mcp_server.main import audit_security_groups
+    result = audit_security_groups()
+    assert any(isinstance(r, dict) and r.get("GroupId") == sg["GroupId"] for r in result)
+
+
+@mock_aws
 def test_audit_security_groups_flags_open_world():
     ec2 = boto3.client("ec2", region_name="us-east-1")
     sg = ec2.create_security_group(GroupName="open-sg", Description="open")

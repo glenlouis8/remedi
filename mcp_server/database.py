@@ -69,116 +69,133 @@ def init_db():
         else:
             print(f"[DB] ERROR: Could not connect to Cloud SQL. {e}", file=sys.stderr)
             raise e
-            
-    c = conn.cursor()
-    
-    # Create tables
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS aws_accounts (
-            user_id TEXT NOT NULL,
-            account_name TEXT NOT NULL DEFAULT 'Default',
-            access_key_enc TEXT NOT NULL,
-            secret_key_enc TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (user_id, account_name)
-        )
-    ''')
-    # Migration: add columns for existing DBs
-    c.execute("ALTER TABLE aws_accounts ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-    c.execute("ALTER TABLE aws_accounts ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT 'Default'")
-    c.execute("ALTER TABLE aws_accounts ADD COLUMN IF NOT EXISTS protected_users TEXT DEFAULT ''")
-    # Migration: promote PK from user_id-only to (user_id, account_name) if needed
-    c.execute("""
-        SELECT COUNT(kcu.column_name)
-        FROM information_schema.table_constraints tc
-        JOIN information_schema.key_column_usage kcu
-          ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-        WHERE tc.table_name = 'aws_accounts' AND tc.constraint_type = 'PRIMARY KEY'
-          AND tc.table_schema = 'public'
-    """)
-    row = c.fetchone()
-    if row and row[0] == 1:
+
+    try:
+        c = conn.cursor()
+
+        # Serialize concurrent init_db() calls — up to MAX_CONCURRENT_SCANS MCP
+        # subprocesses can start at once, and the conditional CREATE / ALTER /
+        # DROP CONSTRAINT DDL below races otherwise. Released on commit.
+        c.execute("SELECT pg_advisory_xact_lock(%s)", (854792301,))
+
+        # Create tables
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS aws_accounts (
+                user_id TEXT NOT NULL,
+                account_name TEXT NOT NULL DEFAULT 'Default',
+                access_key_enc TEXT NOT NULL,
+                secret_key_enc TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, account_name)
+            )
+        ''')
+        # Migration: add columns for existing DBs
+        c.execute("ALTER TABLE aws_accounts ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        c.execute("ALTER TABLE aws_accounts ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT 'Default'")
+        c.execute("ALTER TABLE aws_accounts ADD COLUMN IF NOT EXISTS protected_users TEXT DEFAULT ''")
+        # Migration: make the credential timestamps tz-aware so the 30-min purge
+        # (NOW() - INTERVAL) is correct regardless of a connection's TimeZone.
+        c.execute("""
+            SELECT data_type FROM information_schema.columns
+            WHERE table_name = 'aws_accounts' AND column_name = 'last_used_at' AND table_schema = 'public'
+        """)
+        _lu = c.fetchone()
+        if _lu and _lu[0] == 'timestamp without time zone':
+            c.execute("ALTER TABLE aws_accounts ALTER COLUMN last_used_at TYPE timestamptz USING last_used_at AT TIME ZONE 'UTC'")
+            c.execute("ALTER TABLE aws_accounts ALTER COLUMN created_at TYPE timestamptz USING created_at AT TIME ZONE 'UTC'")
+        # Migration: promote PK from user_id-only to (user_id, account_name) if needed
+        c.execute("""
+            SELECT COUNT(kcu.column_name)
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+            WHERE tc.table_name = 'aws_accounts' AND tc.constraint_type = 'PRIMARY KEY'
+              AND tc.table_schema = 'public'
+        """)
+        row = c.fetchone()
+        if row and row[0] == 1:
+            c.execute("""
+                SELECT constraint_name FROM information_schema.table_constraints
+                WHERE table_name = 'aws_accounts' AND constraint_type = 'PRIMARY KEY' AND table_schema = 'public'
+            """)
+            pk_name = c.fetchone()[0]
+            c.execute(f"ALTER TABLE aws_accounts DROP CONSTRAINT {pk_name}")
+            c.execute("ALTER TABLE aws_accounts ADD PRIMARY KEY (user_id, account_name)")
+
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS compliance_checks (
+                id TEXT NOT NULL,
+                user_id TEXT NOT NULL DEFAULT '',
+                name TEXT,
+                description TEXT,
+                status TEXT
+            )
+        ''')
+        # Migration: backfill legacy global rows, then promote PK to (id, user_id)
+        c.execute("ALTER TABLE compliance_checks ALTER COLUMN user_id SET DEFAULT ''")
+        c.execute("UPDATE compliance_checks SET user_id = '' WHERE user_id IS NULL")
+        c.execute("ALTER TABLE compliance_checks ALTER COLUMN user_id SET NOT NULL")
         c.execute("""
             SELECT constraint_name FROM information_schema.table_constraints
-            WHERE table_name = 'aws_accounts' AND constraint_type = 'PRIMARY KEY' AND table_schema = 'public'
+            WHERE table_name = 'compliance_checks' AND constraint_type = 'PRIMARY KEY' AND table_schema = 'public'
         """)
-        pk_name = c.fetchone()[0]
-        c.execute(f"ALTER TABLE aws_accounts DROP CONSTRAINT {pk_name}")
-        c.execute("ALTER TABLE aws_accounts ADD PRIMARY KEY (user_id, account_name)")
+        pk_row = c.fetchone()
+        if pk_row and pk_row[0] != 'compliance_checks_pkey_composite':
+            c.execute(f"ALTER TABLE compliance_checks DROP CONSTRAINT {pk_row[0]}")
+            c.execute("ALTER TABLE compliance_checks ADD CONSTRAINT compliance_checks_pkey_composite PRIMARY KEY (id, user_id)")
+        elif not pk_row:
+            c.execute("ALTER TABLE compliance_checks ADD CONSTRAINT compliance_checks_pkey_composite PRIMARY KEY (id, user_id)")
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS compliance_checks (
-            id TEXT NOT NULL,
-            user_id TEXT NOT NULL DEFAULT '',
-            name TEXT,
-            description TEXT,
-            status TEXT
-        )
-    ''')
-    # Migration: backfill legacy global rows, then promote PK to (id, user_id)
-    c.execute("ALTER TABLE compliance_checks ALTER COLUMN user_id SET DEFAULT ''")
-    c.execute("UPDATE compliance_checks SET user_id = '' WHERE user_id IS NULL")
-    c.execute("ALTER TABLE compliance_checks ALTER COLUMN user_id SET NOT NULL")
-    c.execute("""
-        SELECT constraint_name FROM information_schema.table_constraints
-        WHERE table_name = 'compliance_checks' AND constraint_type = 'PRIMARY KEY' AND table_schema = 'public'
-    """)
-    pk_row = c.fetchone()
-    if pk_row and pk_row[0] != 'compliance_checks_pkey_composite':
-        c.execute(f"ALTER TABLE compliance_checks DROP CONSTRAINT {pk_row[0]}")
-        c.execute("ALTER TABLE compliance_checks ADD CONSTRAINT compliance_checks_pkey_composite PRIMARY KEY (id, user_id)")
-    elif not pk_row:
-        c.execute("ALTER TABLE compliance_checks ADD CONSTRAINT compliance_checks_pkey_composite PRIMARY KEY (id, user_id)")
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS scans (
+                id TEXT PRIMARY KEY,
+                user_id TEXT,
+                start_time TIMESTAMP,
+                end_time TIMESTAMP,
+                findings_count INTEGER DEFAULT 0,
+                remediations_count INTEGER DEFAULT 0,
+                status TEXT
+            )
+        ''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS scans (
-            id TEXT PRIMARY KEY,
-            user_id TEXT,
-            start_time TIMESTAMP,
-            end_time TIMESTAMP,
-            findings_count INTEGER DEFAULT 0,
-            remediations_count INTEGER DEFAULT 0,
-            status TEXT
-        )
-    ''')
+        # Add new columns if they don't exist (safe to run multiple times)
+        c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS gate_time TIMESTAMP")
+        c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT FALSE")
+        c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS audit_summary TEXT")
+        c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT 'Default'")
 
-    # Add new columns if they don't exist (safe to run multiple times)
-    c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS gate_time TIMESTAMP")
-    c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT FALSE")
-    c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS audit_summary TEXT")
-    c.execute("ALTER TABLE scans ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT 'Default'")
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS feedback (
+                id SERIAL PRIMARY KEY,
+                user_id TEXT,
+                scan_id TEXT,
+                rating INTEGER,
+                message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS feedback (
-            id SERIAL PRIMARY KEY,
-            user_id TEXT,
-            scan_id TEXT,
-            rating INTEGER,
-            message TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS remediation_logs (
+                id SERIAL PRIMARY KEY,
+                scan_id TEXT,
+                user_id TEXT,
+                resource_name TEXT,
+                action TEXT,
+                status TEXT,
+                duration REAL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS remediation_logs (
-            id SERIAL PRIMARY KEY,
-            scan_id TEXT,
-            user_id TEXT,
-            resource_name TEXT,
-            action TEXT,
-            status TEXT,
-            duration REAL,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Per-user compliance rows are created on demand by update_status() as each
-    # user's scans run — no global seed data (compliance_checks is now scoped
-    # per (id, user_id), so there's no single "default" row to pre-populate).
+        # Per-user compliance rows are created on demand by update_status() as each
+        # user's scans run — no global seed data (compliance_checks is now scoped
+        # per (id, user_id), so there's no single "default" row to pre-populate).
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+    finally:
+        conn.close()
 
 def purge_expired_credentials():
     """Delete AWS credentials not used in the last 30 minutes."""
@@ -207,9 +224,18 @@ def start_scan(scan_id: str, user_id: str | None = None, account_name: str = "De
     finally:
         conn.close()
 
+_SCAN_UPDATE_COLUMNS = {
+    "user_id", "start_time", "end_time", "findings_count", "remediations_count",
+    "status", "gate_time", "verified", "audit_summary", "account_name",
+}
+
+
 def update_scan(scan_id: str, **kwargs):
     if not kwargs:
         return
+    bad = set(kwargs) - _SCAN_UPDATE_COLUMNS
+    if bad:
+        raise ValueError(f"update_scan: refusing unknown column(s): {sorted(bad)}")
     conn = get_connection()
     try:
         c = conn.cursor()

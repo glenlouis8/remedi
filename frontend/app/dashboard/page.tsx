@@ -188,6 +188,7 @@ export default function Dashboard() {
   const dropdownRef                         = useRef<HTMLDivElement>(null);
   const iamPickerRef                        = useRef<HTMLDivElement>(null);
   const abortRef                            = useRef<AbortController | null>(null);
+  const scanBusyRef                         = useRef(false);
 
   // Stop the SSE scan stream if the user navigates away mid-scan
   useEffect(() => {
@@ -200,10 +201,14 @@ export default function Dashboard() {
       try {
         const token = await getToken();
         const res = await fetch(`${API}/api/accounts/status`, { headers: { Authorization: `Bearer ${token}` } });
-        if (res.ok) {
-          const data = await res.json();
-          if (!data.connected) { router.replace('/onboarding'); return; }
+        if (!res.ok) {
+          // 401 (expired token) / 5xx — don't render a broken dashboard shell
+          // whose every fetch then fails silently.
+          router.replace('/onboarding');
+          return;
         }
+        const data = await res.json();
+        if (!data.connected) { router.replace('/onboarding'); return; }
       } catch {
         router.replace('/onboarding');
         return;
@@ -307,6 +312,12 @@ export default function Dashboard() {
   }, [scanState, getToken]);
 
   const startScan = async () => {
+    // Re-entrancy guard: a double-click (or a second trigger before React
+    // re-renders) would fire two /api/run-agent requests — two Celery scans,
+    // two reader loops, and abortRef clobbered so only one is stoppable.
+    if (scanBusyRef.current) return;
+    scanBusyRef.current = true;
+
     setScanState('scanning');
     setScanError(null);
     setScanItems({});
@@ -319,6 +330,7 @@ export default function Dashboard() {
     setRemediationPlan([]);
     setRemediationSteps([]);
     setResourceReasons({});
+    setCurrentScanId(null);  // don't let a missed log line approve the previous scan
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -455,6 +467,7 @@ export default function Dashboard() {
     } catch (err: unknown) {
       if ((err as Error).name === 'AbortError') wasAborted = true;
     } finally {
+      scanBusyRef.current = false;
       setActiveService(null);
       if (wasAborted) {
         setScanState('idle');
@@ -507,10 +520,14 @@ export default function Dashboard() {
 
   const handleDeleteAccount = async (name: string) => {
     const token = await getToken();
-    await fetch(`${API}/api/accounts/${encodeURIComponent(name)}`, {
+    const res = await fetch(`${API}/api/accounts/${encodeURIComponent(name)}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
-    });
+    }).catch(() => null);
+    if (!res || !res.ok) {
+      setScanError('Could not disconnect that account. Try again.');
+      return;
+    }
     setAccounts(prev => {
       const updated = prev.filter(a => a.account_name !== name);
       if (selectedAccount === name) {
@@ -522,6 +539,10 @@ export default function Dashboard() {
   };
 
   const handleApprove = async () => {
+    if (!currentScanId) {
+      setScanError('Could not identify the scan to approve — please rerun the scan.');
+      return;
+    }
     setScanState('remediating');
     try {
       const token = await getToken();
@@ -813,7 +834,12 @@ export default function Dashboard() {
                     <button
                       onClick={async () => {
                         const token = await getToken();
-                        await fetch(`${API}/api/accounts`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }).catch(console.error);
+                        const wipe = () => fetch(`${API}/api/accounts`, {
+                          method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+                        }).then(r => r.ok).catch(() => false);
+                        // Best-effort wipe with one retry; the 30-min inactivity
+                        // purge is the backstop if both attempts fail.
+                        if (!(await wipe())) await wipe();
                         signOut({ redirectUrl: '/' });
                       }}
                       className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-slate-500 hover:text-slate-200 hover:bg-white/5 transition-colors text-left"

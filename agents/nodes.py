@@ -8,9 +8,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 from agents.state import AgentState
-from agents.patterns import REMEDIATION_LINE_PATTERN
+from agents.patterns import REMEDIATION_LINE_PATTERN, FINDING_PATTERN
 from agents.mcp_client import get_all_tools, get_tools_by_name
-from mcp_server.database import start_scan, update_scan, log_remediation, update_status
+from mcp_server.database import start_scan, update_scan, log_remediation, update_status, reset_to_vulnerable
 import datetime
 
 load_dotenv()
@@ -99,10 +99,7 @@ def _run_sub_agent(
         SystemMessage(content=prompt + protected_clause),
         HumanMessage(content="Begin your audit now."),
     ]
-    finding_pattern = re.compile(
-        r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+?)\s*(?:\|\s*FIX:\s*(.+))?$",
-        re.IGNORECASE,
-    )
+    finding_pattern = FINDING_PATTERN
     accumulated_findings: list[str] = []
 
     MAX_TOOL_ITERATIONS = 15
@@ -293,6 +290,11 @@ def orchestrator_node(state: AgentState):
     user_id = os.environ.get("REMEDI_USER_ID")
     account_name = os.environ.get("REMEDI_ACCOUNT_NAME", "Default")
     start_scan(scan_id, user_id=user_id, account_name=account_name)
+    # Assume every control is vulnerable until THIS scan re-proves it safe.
+    # Without this, a check left SAFE by a prior scan stays SAFE (and counts as
+    # passing) if this scan's report generator errors before rewriting statuses.
+    if user_id:
+        reset_to_vulnerable(user_id)
 
     tasks = [
         (
@@ -327,11 +329,7 @@ def orchestrator_node(state: AgentState):
                 svc_key = _SVC_KEY.get(svc, svc.lower())
 
                 # Parse FINDING lines to emit one [SCAN] event per actual resource
-                finding_pattern = re.compile(
-                    r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+?)\s*(?:\|\s*FIX:\s*(.+))?$",
-                    re.IGNORECASE,
-                )
-                parsed_findings = finding_pattern.findall(text)
+                parsed_findings = FINDING_PATTERN.findall(text)
 
                 if parsed_findings:
                     seen_resources = set()
@@ -487,19 +485,17 @@ def report_generator_node(state: AgentState):
         section_end = audit_combined.find("===", section_start + len(f"=== {svc} ==="))
         section = audit_combined[
             section_start : section_end if section_end != -1 else None
-        ].upper()
-        has_issues = any(
-            kw in section
-            for kw in [
-                "CRITICAL",
-                "HIGH",
-                "FINDING:",
-                "VULNERABLE",
-                "EXPOSED",
-                "PUBLIC",
-            ]
-        )
-        update_status(check_id, "VULNERABLE" if has_issues else "SAFE")
+        ]
+        # Structured detection instead of keyword-soup substring matching
+        # ("PUBLIC" matched "no PUBLIC access", "HIGH" matched "highly", etc).
+        # Any real FINDING line (any severity) means the control is not passing.
+        real_findings = list(FINDING_PATTERN.finditer(section))
+        had_error = "ERROR:" in section.upper()
+        if real_findings:
+            update_status(check_id, "VULNERABLE")
+        elif not had_error:
+            update_status(check_id, "SAFE")
+        # else: this service errored — leave the row VULNERABLE (reset at scan start)
 
     print("[CIS_READY]", flush=True)
     if "SYSTEM SECURE" in clean_content:
@@ -610,6 +606,18 @@ def remediator_agent(state: AgentState):
         approved_resources = state.get("approved_resources")  # None = all approved
         protected_users_lower = {u.lower() for u in _get_protected_users()}
 
+        # Drift guard: report_generator counted N findings, but the strict line
+        # parser matched none. That means the report format drifted — fail loud
+        # instead of "succeeding" with zero fixes and letting the verifier
+        # rubber-stamp a scan that changed nothing.
+        raw_match_count = len(pattern.findall(summary))
+        expected_findings = state.get("findings_count", 0)
+        if expected_findings and raw_match_count == 0:
+            raise ValueError(
+                f"Remediation parser matched 0 lines but the report lists "
+                f"{expected_findings} finding(s) — report format drift."
+            )
+
         tasks = []
         seen = set()
         for match in pattern.finditer(summary):
@@ -657,6 +665,13 @@ def remediator_agent(state: AgentState):
             try:
                 result_str = func.invoke(valid_args)
                 duration = (datetime.datetime.now() - start_time).total_seconds()
+                # A tool can decline without raising (e.g. restrict_iam_user
+                # hitting its protected-user guard) — don't count that as a fix.
+                stripped = str(result_str).lstrip()
+                if stripped.startswith(("REFUSED:", "SKIPPED:")):
+                    return (resource, real_name, args, f"⚠️ {result_str}", "SKIPPED", duration)
+                if stripped.startswith("ERROR:"):
+                    return (resource, real_name, args, f"❌ {result_str}", "ERROR", duration)
                 return (
                     resource,
                     real_name,
@@ -716,6 +731,7 @@ def verifier_agent(state: AgentState):
     """
     print("--- [NODE] VERIFIER AGENT ---")
     messages = state["messages"]
+    iterations = state.get("verify_iterations", 0) + 1
 
     system_msg = SystemMessage(
         content=(
@@ -765,7 +781,8 @@ def verifier_agent(state: AgentState):
                 AIMessage(
                     content="VERIFICATION SKIPPED: Remediator failed — no fixes were applied."
                 )
-            ]
+            ],
+            "verify_iterations": iterations,
         }
 
     context = messages[report_idx:]
@@ -827,14 +844,16 @@ def verifier_agent(state: AgentState):
             "enable_cloudtrail": "remediate_cloudtrail",
             "fix_cloudtrail": "remediate_cloudtrail",
         }
+        # Parse with the SAME pattern the remediator used, so a report line the
+        # remediator acted on can't be missed here (which would leave the control
+        # VULNERABLE despite a verified fix). Group 2 is the tool name.
         summary = state.get("audit_summary", "")
-        call_pattern = re.compile(r'I will call [`\'"]?(\w+)[`\'"]?')
         updated = set()
-        for m in call_pattern.finditer(summary):
-            tool_name = _INTENT_TO_TOOL.get(m.group(1), m.group(1))
+        for m in REMEDIATION_LINE_PATTERN.finditer(summary):
+            tool_name = _INTENT_TO_TOOL.get(m.group(2), m.group(2))
             check_id = _TOOL_TO_CIS.get(tool_name)
             if check_id and check_id not in updated:
                 update_status(check_id, "SAFE")
                 updated.add(check_id)
 
-    return {"messages": [response]}
+    return {"messages": [response], "verify_iterations": iterations}

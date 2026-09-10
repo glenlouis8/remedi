@@ -1,9 +1,13 @@
 import os
+import signal
 import sys
 import subprocess
 import redis
 from celery import Celery
+from celery.exceptions import SoftTimeLimitExceeded
 from dotenv import load_dotenv
+
+from remedi_platform.accounts import unseal_json
 
 load_dotenv()
 
@@ -21,24 +25,93 @@ r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 # Separate connection for blpop — no socket timeout so it can block up to 1800s
 r_blocking = redis.Redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=None)
 
+# Decrement active_scans but never below 0. A stale key — the server's boot-time
+# reset, or Redis eviction — must not push the counter negative, which would
+# silently disable the MAX_CONCURRENT_SCANS cap.
+_RELEASE_SLOT_LUA = """
+local v = tonumber(redis.call('get', KEYS[1]) or '0')
+if v <= 0 then
+  redis.call('set', KEYS[1], 0)
+  return 0
+end
+return redis.call('decr', KEYS[1])
+"""
 
-@celery_app.task(bind=True)
-def run_scan_task(self, scan_id: str, user_id: str, env: dict):
+
+def _release_scan_slot():
     try:
-        _run_scan_task(scan_id, user_id, env)
+        r.eval(_RELEASE_SLOT_LUA, 1, "active_scans")
+    except Exception as exc:
+        print(f"[worker] could not release scan slot: {exc}", flush=True)
+
+
+def _stop_process(process):
+    """Stop the scan subprocess and everything it spawned — the MCP server and
+    the AWS worker threads. main.py is launched with start_new_session=True, so
+    it leads its own process group; signalling the group reaches the children
+    too. terminate()/kill() on the Popen object alone would only hit main.py."""
+    if process.poll() is not None:
+        return
+    try:
+        pgid = os.getpgid(process.pid)
+        send = lambda sig: os.killpg(pgid, sig)
+    except Exception:
+        send = process.send_signal
+    try:
+        send(signal.SIGTERM)
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            send(signal.SIGKILL)
+            process.wait()
+    except Exception as exc:
+        print(f"[worker] error stopping subprocess: {exc}", flush=True)
+
+
+# Hard ceiling on a single scan. The 30-min human-approval wait (blpop timeout)
+# dominates; audit + remediate + verify add a few minutes. soft_time_limit raises
+# SoftTimeLimitExceeded inside the task so cleanup can run; time_limit is the
+# SIGKILL backstop if that cleanup itself wedges. Without these, one stuck scan
+# blocks the single --concurrency=1 worker and queues every future scan behind it.
+_SOFT_TIME_LIMIT = 2700   # 45 min
+_HARD_TIME_LIMIT = 3000   # 50 min
+
+
+@celery_app.task(bind=True, soft_time_limit=_SOFT_TIME_LIMIT, time_limit=_HARD_TIME_LIMIT)
+def run_scan_task(self, scan_id: str, user_id: str):
+    try:
+        _run_scan_task(scan_id, user_id)
     finally:
         # Release the concurrency slot reserved by /api/run-agent, no matter how we exit.
-        r.decr("active_scans")
+        _release_scan_slot()
 
 
-def _run_scan_task(scan_id: str, user_id: str, env: dict):
-    proc_env = os.environ.copy()
-    proc_env.update(env)
-    proc_env["PYTHONUNBUFFERED"] = "1"
-    proc_env["REMEDI_SCAN_ID"] = scan_id
-
-    print(f"[worker] spawning main.py for {scan_id} with python={sys.executable}", flush=True)
+def _run_scan_task(scan_id: str, user_id: str):
+    # One guarded body: EVERY exit path — cred-key missing, unseal failure, spawn
+    # failure, Redis blip, broken pipe, time limit, clean EOF — lands in the
+    # `finally`, which kills the subprocess and always writes a terminal status +
+    # __DONE__. Without that the SSE stream in server.py never closes (status
+    # stuck 'queued'/'running', no __DONE__) and leaks a thread + connection per
+    # connected client forever.
+    process = None
+    final_status = "aborted"
+    error_line = None
     try:
+        # Credentials + config were handed off via a short-lived encrypted Redis
+        # key (see server.py) rather than a Celery arg. Read once, then delete.
+        sealed = r.get(f"scan:{scan_id}:env")
+        r.delete(f"scan:{scan_id}:env")
+        if not sealed:
+            error_line = "[ERROR] Scan credentials expired before the worker started.\n"
+            return
+        env = unseal_json(sealed)
+
+        proc_env = os.environ.copy()
+        proc_env.update(env)
+        proc_env["PYTHONUNBUFFERED"] = "1"
+        proc_env["REMEDI_SCAN_ID"] = scan_id
+
+        print(f"[worker] spawning main.py for {scan_id} with python={sys.executable}", flush=True)
         process = subprocess.Popen(
             [sys.executable, "-u", "main.py"],
             stdin=subprocess.PIPE,
@@ -47,54 +120,71 @@ def _run_scan_task(scan_id: str, user_id: str, env: dict):
             env=proc_env,
             text=True,
             bufsize=1,
+            start_new_session=True,  # own process group — see _stop_process
         )
+
+        # Store owner so /api/approve can verify the caller owns this scan
+        r.set(f"scan:{scan_id}:owner", user_id, ex=7200)
+        r.set(f"scan:{scan_id}:status", "running", ex=7200)
+
+        final_status = "done"
+        for line in iter(process.stdout.readline, ""):
+            if not line:
+                continue
+
+            print(line, end="", flush=True)
+            r.xadd(f"scan:{scan_id}:stream", {"line": line}, maxlen=2000)
+
+            if "[ACTION_REQUIRED] WAITING_FOR_APPROVAL" in line:
+                r.set(f"scan:{scan_id}:status", "waiting_approval", ex=7200)
+
+                # Block with zero CPU burn until /api/approve pushes a decision.
+                # timeout=1800 → auto-abort if user never approves within 30 min.
+                result = r_blocking.blpop(f"scan:{scan_id}:decision", timeout=1800)
+                if result is None:
+                    final_status = "aborted"
+                    break
+
+                decision = result[1]
+                if not decision.startswith("approve"):
+                    # A user who approved then closed the tab queues [abort, approve];
+                    # blpop popped one — prefer an explicit approve if it's still queued.
+                    queued = r.lrange(f"scan:{scan_id}:decision", 0, -1)
+                    approve = next((d for d in queued if d.startswith("approve")), None)
+                    if approve is None:
+                        final_status = "aborted"
+                        break
+                    decision = approve
+
+                r.delete(f"scan:{scan_id}:decision")
+                process.stdin.write(decision + "\n")
+                process.stdin.flush()
+                r.set(f"scan:{scan_id}:status", "running", ex=7200)
+
+    except SoftTimeLimitExceeded:
+        print(f"[worker] scan {scan_id} hit the time limit — aborting", flush=True)
+        final_status = "aborted"
+        error_line = "[ERROR] Scan exceeded the time limit and was stopped.\n"
+
     except Exception as exc:
-        print(f"[worker] failed to spawn main.py: {exc}", flush=True)
-        r.publish(f"scan:{scan_id}:output", f"[ERROR] Could not start scan process: {exc}\n")
-        r.publish(f"scan:{scan_id}:output", "__DONE__")
-        r.set(f"scan:{scan_id}:status", "done", ex=7200)
-        return
+        print(f"[worker] scan {scan_id} failed: {exc}", flush=True)
+        final_status = "aborted"
+        error_line = f"[ERROR] Scan failed: {exc}\n"
 
-    # Store owner so /api/approve can verify the caller owns this scan
-    r.set(f"scan:{scan_id}:owner", user_id, ex=7200)
-    r.set(f"scan:{scan_id}:status", "running", ex=7200)
-
-    for line in iter(process.stdout.readline, ""):
-        if not line:
-            continue
-
-        print(line, end="", flush=True)
-        r.xadd(f"scan:{scan_id}:stream", {"line": line}, maxlen=2000)
-
-        if "[ACTION_REQUIRED] WAITING_FOR_APPROVAL" in line:
-            r.set(f"scan:{scan_id}:status", "waiting_approval", ex=7200)
-
-            # Block with zero CPU burn until /api/approve pushes a decision.
-            # timeout=1800 → auto-abort if user never approves within 30 min.
-            result = r_blocking.blpop(f"scan:{scan_id}:decision", timeout=1800)
-            if result is None:
-                process.terminate()
-                r.set(f"scan:{scan_id}:status", "aborted", ex=7200)
-                return
-
-            _, decision = result
-            if not decision.startswith("approve"):
-                process.terminate()
-                r.set(f"scan:{scan_id}:status", "aborted", ex=7200)
-                return
-            process.stdin.write(decision + "\n")
-            process.stdin.flush()
-            r.set(f"scan:{scan_id}:status", "running", ex=7200)
-
-    process.wait()
-    r.set(f"scan:{scan_id}:status", "done", ex=7200)
-
-    # Bust cached metrics/history so dashboard shows fresh data after scan
-    r.delete(
-        f"cache:{user_id}:metrics", f"cache:{user_id}:history",
-        f"cache:{user_id}:status", f"cache:{user_id}:compliance", f"cache:{user_id}:breakdown",
-    )
-
-    # Signal stream consumers that output is finished; expire stream after 2 hours
-    r.xadd(f"scan:{scan_id}:stream", {"line": "__DONE__"})
-    r.expire(f"scan:{scan_id}:stream", 7200)
+    finally:
+        if process is not None:
+            _stop_process(process)
+        try:
+            if error_line:
+                r.xadd(f"scan:{scan_id}:stream", {"line": error_line}, maxlen=2000)
+            r.set(f"scan:{scan_id}:status", final_status, ex=7200)
+            # Bust cached metrics/history so dashboard shows fresh data after scan
+            r.delete(
+                f"cache:{user_id}:metrics", f"cache:{user_id}:history",
+                f"cache:{user_id}:status", f"cache:{user_id}:compliance", f"cache:{user_id}:breakdown",
+            )
+            # Signal stream consumers that output is finished; expire stream after 2 hours
+            r.xadd(f"scan:{scan_id}:stream", {"line": "__DONE__"})
+            r.expire(f"scan:{scan_id}:stream", 7200)
+        except Exception as exc:
+            print(f"[worker] error finalizing scan {scan_id}: {exc}", flush=True)

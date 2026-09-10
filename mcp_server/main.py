@@ -1,5 +1,6 @@
 import boto3
 import json
+import os
 import sys
 import time
 import datetime
@@ -26,6 +27,20 @@ TARGET_REGION = "us-east-1"
 def get_boto_client(service_name):
     """Helper to ensure we always target the vulnerable region."""
     return boto3.client(service_name, region_name=TARGET_REGION)
+
+
+def _protected_iam_users() -> set:
+    """Usernames that must never be remediated: the PROTECTED_IAM_USERS env list
+    plus the identity these credentials belong to (self-lockout guard)."""
+    protected = {
+        u.strip() for u in os.environ.get("PROTECTED_IAM_USERS", "").split(",") if u.strip()
+    }
+    try:
+        arn = boto3.client("sts", region_name=TARGET_REGION).get_caller_identity()["Arn"]
+        protected.add(arn.split("/")[-1])
+    except Exception:
+        pass
+    return protected
 
 
 # =============================================================================
@@ -96,6 +111,11 @@ def restrict_iam_user(user_name: str) -> str:
     iam = get_boto_client("iam")
     log = []
     read_only_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+
+    # Tool-boundary guard — never trust upstream parsing/LLM alone to keep a
+    # protected user (or the agent's own identity) out of the remediation plan.
+    if user_name in _protected_iam_users():
+        return f"REFUSED: '{user_name}' is a protected IAM user — not remediating."
 
     try:
         # Detach Managed
@@ -174,15 +194,20 @@ def check_s3_security(bucket_name: str) -> dict:
         else:
             _emit("s3", bucket_name, "ok")
         return {"bucket": bucket_name, "is_public_risk": is_public}
-    except ClientError:
-        _emit("s3", bucket_name, "vulnerable", "no public access block configured")
-        return {
-            "bucket": bucket_name,
-            "is_public_risk": True,
-            "note": "No Public Access Block found.",
-        }
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("NoSuchPublicAccessBlockConfiguration", "NoSuchBucketPolicy"):
+            _emit("s3", bucket_name, "vulnerable", "no public access block configured")
+            return {
+                "bucket": bucket_name,
+                "is_public_risk": True,
+                "note": "No Public Access Block found.",
+            }
+        # AccessDenied etc. — we could not determine the state; don't cry wolf.
+        _emit("s3", bucket_name, "unknown", f"could not check public access ({code or 'ClientError'})")
+        return {"bucket": bucket_name, "is_public_risk": False, "note": f"Check failed: {code}"}
     except Exception as e:
-        return {"bucket": bucket_name, "error": str(e)}
+        return {"bucket": bucket_name, "is_public_risk": False, "error": str(e)}
 
 
 @mcp.tool()
@@ -212,9 +237,14 @@ def audit_s3_buckets() -> str:
                 else:
                     _emit("s3", bucket_name, "ok")
                     results.append(f"BUCKET {bucket_name}: SECURE")
-            except ClientError:
-                _emit("s3", bucket_name, "vulnerable", "no public access block configured")
-                results.append(f"BUCKET {bucket_name}: PUBLIC RISK — no public access block found")
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code", "")
+                if code in ("NoSuchPublicAccessBlockConfiguration", "NoSuchBucketPolicy"):
+                    _emit("s3", bucket_name, "vulnerable", "no public access block configured")
+                    results.append(f"BUCKET {bucket_name}: PUBLIC RISK — no public access block found")
+                else:
+                    _emit("s3", bucket_name, "unknown", f"could not check ({code or 'ClientError'})")
+                    results.append(f"BUCKET {bucket_name}: UNKNOWN — could not check public access ({code})")
             except Exception as e:
                 results.append(f"BUCKET {bucket_name}: ERROR — {e}")
 
@@ -277,7 +307,7 @@ def audit_vpc_network() -> list:
             )
         return network_findings
     except Exception as e:
-        return [f"Network Audit Error: {str(e)}"]
+        return [{"error": f"Network Audit Error: {str(e)}"}]
 
 
 @mcp.tool()
@@ -342,14 +372,21 @@ def remediate_vpc_flow_logs(vpc_id: str) -> str:
 
         role_arn = iam.get_role(RoleName=role_name)["Role"]["Arn"]
 
-        # 3. Enable Flow Logs
-        ec2.create_flow_logs(
+        # 3. Enable Flow Logs. create_flow_logs does NOT raise on partial
+        # failure — failures land in the Unsuccessful list (e.g. the freshly
+        # created IAM role not yet propagated). Check it before claiming success.
+        resp = ec2.create_flow_logs(
             ResourceIds=[vpc_id],
             ResourceType="VPC",
             TrafficType="ALL",
             LogGroupName=log_group_name,
             DeliverLogsPermissionArn=role_arn,
         )
+        unsuccessful = resp.get("Unsuccessful", [])
+        if unsuccessful:
+            reason = unsuccessful[0].get("Error", {}).get("Message", str(unsuccessful[0]))
+            return f"ERROR: Flow logs not enabled for {vpc_id}: {reason}"
+
         update_status("check_vpc","SAFE")
         return (
             f"SUCCESS: Flow Logs enabled for {vpc_id}. "
@@ -372,25 +409,28 @@ def audit_security_groups() -> list:
         sgs = ec2.describe_security_groups()["SecurityGroups"]
         for sg in sgs:
             for perm in sg["IpPermissions"]:
-                for ip_range in perm.get("IpRanges", []):
-                    if ip_range.get("CidrIp") == "0.0.0.0/0":
-                        port = perm.get("FromPort", "all")
-                        _emit("sg", sg["GroupId"], "vulnerable", f"port {port} open to 0.0.0.0/0")
-                        risky_groups.append(
-                                {
-                                    "GroupId": sg["GroupId"],
-                                    "Port": port,
-                                    "Protocol": perm.get("IpProtocol"),
-                                    "Risk": "OPEN TO WORLD (0.0.0.0/0)",
-                                }
-                            )
-        
+                world_open = (
+                    any(r.get("CidrIp") == "0.0.0.0/0" for r in perm.get("IpRanges", []))
+                    or any(r.get("CidrIpv6") == "::/0" for r in perm.get("Ipv6Ranges", []))
+                )
+                if world_open:
+                    port = perm.get("FromPort", "all")
+                    _emit("sg", sg["GroupId"], "vulnerable", f"port {port} open to the internet")
+                    risky_groups.append(
+                        {
+                            "GroupId": sg["GroupId"],
+                            "Port": port,
+                            "Protocol": perm.get("IpProtocol"),
+                            "Risk": "OPEN TO WORLD (0.0.0.0/0)",
+                        }
+                    )
+
         if not risky_groups:
             update_status("check_ssh", "SAFE")
             return ["No risky Security Groups found. System is SAFE."]
             
     except Exception as e:
-        return [f"Error auditing SGs: {str(e)}"]
+        return [{"error": f"Error auditing SGs: {str(e)}"}]
     return risky_groups if risky_groups else ["No risky Security Groups found."]
 
 
@@ -403,28 +443,35 @@ def revoke_security_group_ingress(group_id: str) -> str:
     ec2 = get_boto_client("ec2")
     try:
         sg = ec2.describe_security_groups(GroupIds=[group_id])["SecurityGroups"][0]
-        public_rules = [
-            perm for perm in sg["IpPermissions"]
-            if any(r.get("CidrIp") == "0.0.0.0/0" for r in perm.get("IpRanges", []))
-        ]
 
-        if not public_rules:
+        # Rebuild each internet-open permission with ONLY the world ranges
+        # (0.0.0.0/0 and ::/0). Drop UserIdGroupPairs / PrefixListIds / narrower
+        # CIDRs that may share the same permission block, so revoking the public
+        # rule doesn't also tear down peer-SG or private access on that port.
+        rules_to_revoke = []
+        for perm in sg["IpPermissions"]:
+            v4 = [r for r in perm.get("IpRanges", []) if r.get("CidrIp") == "0.0.0.0/0"]
+            v6 = [r for r in perm.get("Ipv6Ranges", []) if r.get("CidrIpv6") == "::/0"]
+            if not (v4 or v6):
+                continue
+            stripped = {
+                k: v for k, v in perm.items()
+                if k not in ("IpRanges", "Ipv6Ranges", "UserIdGroupPairs", "PrefixListIds")
+            }
+            if v4:
+                stripped["IpRanges"] = [{"CidrIp": "0.0.0.0/0"}]
+            if v6:
+                stripped["Ipv6Ranges"] = [{"CidrIpv6": "::/0"}]
+            rules_to_revoke.append(stripped)
+
+        if not rules_to_revoke:
             update_status("check_ssh", "SAFE")
             return f"SUCCESS: No public ingress rules found on {group_id} (already clean)."
 
-        # Strip to only the 0.0.0.0/0 CidrIp ranges so we don't accidentally
-        # revoke private rules on the same permission
-        rules_to_revoke = []
-        for perm in public_rules:
-            rules_to_revoke.append({
-                **{k: v for k, v in perm.items() if k != "IpRanges"},
-                "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
-            })
-
         ec2.revoke_security_group_ingress(GroupId=group_id, IpPermissions=rules_to_revoke)
-        ports = [str(p.get("FromPort", "all")) for p in public_rules]
+        ports = [str(p.get("FromPort", "all")) for p in rules_to_revoke]
         update_status("check_ssh", "SAFE")
-        return f"SUCCESS: Revoked all 0.0.0.0/0 ingress rules on {group_id} (ports: {', '.join(ports)})."
+        return f"SUCCESS: Revoked all internet-open ingress rules on {group_id} (ports: {', '.join(ports)})."
     except ClientError as e:
         if e.response["Error"]["Code"] == "InvalidPermission.NotFound":
             update_status("check_ssh", "SAFE")
@@ -457,7 +504,7 @@ def audit_ec2_vulnerabilities() -> list:
                 )
 
                 root_dev = inst.get("RootDeviceName")
-                encrypted = False
+                encrypted = None  # None = root device mapping not in the response
                 for bdm in inst.get("BlockDeviceMappings", []):
                     if bdm["DeviceName"] == root_dev:
                         encrypted = bdm.get("Ebs", {}).get("Encrypted", False)
@@ -465,7 +512,9 @@ def audit_ec2_vulnerabilities() -> list:
                 issues = []
                 if imds_status == "optional":
                     issues.append("IMDSv1 enabled")
-                if not encrypted:
+                if encrypted is False:
+                    # Only flag when we actually observed an unencrypted root volume,
+                    # not when the mapping was simply absent from the response.
                     issues.append("unencrypted root volume")
                 if issues:
                     _emit("ec2", inst["InstanceId"], "vulnerable", ", ".join(issues))
@@ -476,12 +525,12 @@ def audit_ec2_vulnerabilities() -> list:
                         "InstanceId": inst["InstanceId"],
                         "PublicIP": inst.get("PublicIpAddress", "None"),
                         "IMDSv1_Enabled": (imds_status == "optional"),
-                        "RootVolume_Encrypted": encrypted,
+                        "RootVolume_Encrypted": "unknown" if encrypted is None else encrypted,
                     }
                 )
         return findings if findings else ["No running instances found."]
     except Exception as e:
-        return [f"Audit Error: {str(e)}"]
+        return [{"error": f"Audit Error: {str(e)}"}]
 
 
 @mcp.tool()
@@ -493,9 +542,14 @@ def enforce_imdsv2(instance_id: str) -> str:
     # Metadata options can be set on a running OR stopped instance, but the API
     # rejects calls during the transient 'stopping'/'pending' states with
     # IncorrectInstanceState. When the same instance is also being quarantined
-    # (stop_instance) in parallel, retry through the transition.
+    # (stop_instance) in parallel, retry briefly through the transition.
+    #
+    # Bounded to ~10s: every MCP tool call is serialised through one stdio pipe,
+    # so a long sleep here stalls every other concurrent audit/remediation call
+    # and races the client's 60s timeout. If the instance is still mid-stop after
+    # this window, the next scan re-runs this on the settled (stopped) instance.
     last_err = None
-    for attempt in range(30):
+    for attempt in range(5):
         try:
             ec2.modify_instance_metadata_options(
                 InstanceId=instance_id, HttpTokens="required", HttpEndpoint="enabled"
@@ -504,7 +558,7 @@ def enforce_imdsv2(instance_id: str) -> str:
             return f"SUCCESS: IMDSv2 enforced on {instance_id}."
         except Exception as e:
             last_err = e
-            if "IncorrectInstanceState" in str(e):
+            if "IncorrectInstanceState" in str(e) and attempt < 4:
                 time.sleep(2)
                 continue
             break
@@ -559,7 +613,7 @@ def audit_rds_instances() -> list:
             update_status("check_rds", "SAFE")
         return findings
     except Exception as e:
-        return [f"RDS Audit Error: {str(e)}"]
+        return [{"error": f"RDS Audit Error: {str(e)}"}]
 
 
 @mcp.tool()
@@ -602,6 +656,7 @@ def audit_lambda_permissions() -> list:
                 role_arn = fn["Role"]
                 role_name = role_arn.split("/")[-1]
                 issues = []
+                role_check_failed = False
 
                 try:
                     for p_page in iam.get_paginator("list_attached_role_policies").paginate(RoleName=role_name):
@@ -618,8 +673,21 @@ def audit_lambda_permissions() -> list:
                                     actions = [actions]
                                 if "*" in actions and stmt.get("Effect") == "Allow":
                                     issues.append(f"Inline policy '{policy_name}' allows Action: '*'")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Don't swallow into "clean" — a throttle / AccessDenied on a
+                    # role that really is over-privileged would clear the finding.
+                    role_check_failed = True
+                    print(f"[audit_lambda] could not inspect role {role_name}: {exc}", file=sys.stderr, flush=True)
+
+                if role_check_failed:
+                    _emit("lambda", fn["FunctionName"], "unknown", "could not inspect execution role")
+                    findings.append({
+                        "FunctionName": fn["FunctionName"],
+                        "Role": role_name,
+                        "Issues": ["ROLE INSPECTION FAILED — unverified"],
+                        "OverPermissioned": None,
+                    })
+                    continue
 
                 if issues:
                     _emit("lambda", fn["FunctionName"], "vulnerable", issues[0])
@@ -635,11 +703,12 @@ def audit_lambda_permissions() -> list:
         if not findings:
             return ["No Lambda functions found."]
 
-        if not any(f["OverPermissioned"] for f in findings):
+        # Only write SAFE if every function was successfully checked AND clean.
+        if findings and all(f["OverPermissioned"] is False for f in findings):
             update_status("check_lambda", "SAFE")
         return findings
     except Exception as e:
-        return [f"Lambda Audit Error: {str(e)}"]
+        return [{"error": f"Lambda Audit Error: {str(e)}"}]
 
 
 @mcp.tool()
@@ -700,6 +769,10 @@ def audit_cloudtrail_logging() -> list:
     try:
         trails = ct.describe_trails(includeShadowTrails=False).get("trailList", [])
         if not trails:
+            # Worst case — emit the same signals as every other branch so the
+            # frontend shows it and the compliance row is written.
+            _emit("cloudtrail", "account", "vulnerable", "no CloudTrail trail exists — all API activity unlogged")
+            update_status("check_cloudtrail", "VULNERABLE")
             return [{"status": "NO_TRAILS", "message": "No CloudTrail trails found. All API activity is unlogged."}]
 
         for trail in trails:
@@ -725,7 +798,7 @@ def audit_cloudtrail_logging() -> list:
             update_status("check_cloudtrail", "SAFE")
         return findings
     except Exception as e:
-        return [f"CloudTrail Audit Error: {str(e)}"]
+        return [{"error": f"CloudTrail Audit Error: {str(e)}"}]
 
 
 @mcp.tool()
@@ -743,9 +816,11 @@ def remediate_cloudtrail(trail_name: str = "remedi-audit-trail") -> str:
         trails = ct.describe_trails(includeShadowTrails=False).get("trailList", [])
 
         if not trails:
-            # No trails — create one from scratch
+            # No trails — create one from scratch. Use TARGET_REGION: the s3
+            # client from get_boto_client() is pinned to it, so a LocationConstraint
+            # from a different region would raise IllegalLocationConstraint.
             account_id = sts.get_caller_identity()["Account"]
-            region = boto3.Session().region_name or "us-east-1"
+            region = TARGET_REGION
             bucket_name = f"remedi-cloudtrail-{account_id}-{region}"
 
             # Create the S3 bucket
