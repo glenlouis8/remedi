@@ -1,5 +1,6 @@
 import boto3
 import json
+import os
 import sys
 import time
 import datetime
@@ -26,6 +27,20 @@ TARGET_REGION = "us-east-1"
 def get_boto_client(service_name):
     """Helper to ensure we always target the vulnerable region."""
     return boto3.client(service_name, region_name=TARGET_REGION)
+
+
+def _protected_iam_users() -> set:
+    """Usernames that must never be remediated: the PROTECTED_IAM_USERS env list
+    plus the identity these credentials belong to (self-lockout guard)."""
+    protected = {
+        u.strip() for u in os.environ.get("PROTECTED_IAM_USERS", "").split(",") if u.strip()
+    }
+    try:
+        arn = boto3.client("sts", region_name=TARGET_REGION).get_caller_identity()["Arn"]
+        protected.add(arn.split("/")[-1])
+    except Exception:
+        pass
+    return protected
 
 
 # =============================================================================
@@ -96,6 +111,11 @@ def restrict_iam_user(user_name: str) -> str:
     iam = get_boto_client("iam")
     log = []
     read_only_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+
+    # Tool-boundary guard — never trust upstream parsing/LLM alone to keep a
+    # protected user (or the agent's own identity) out of the remediation plan.
+    if user_name in _protected_iam_users():
+        return f"REFUSED: '{user_name}' is a protected IAM user — not remediating."
 
     try:
         # Detach Managed
@@ -484,7 +504,7 @@ def audit_ec2_vulnerabilities() -> list:
                 )
 
                 root_dev = inst.get("RootDeviceName")
-                encrypted = False
+                encrypted = None  # None = root device mapping not in the response
                 for bdm in inst.get("BlockDeviceMappings", []):
                     if bdm["DeviceName"] == root_dev:
                         encrypted = bdm.get("Ebs", {}).get("Encrypted", False)
@@ -492,7 +512,9 @@ def audit_ec2_vulnerabilities() -> list:
                 issues = []
                 if imds_status == "optional":
                     issues.append("IMDSv1 enabled")
-                if not encrypted:
+                if encrypted is False:
+                    # Only flag when we actually observed an unencrypted root volume,
+                    # not when the mapping was simply absent from the response.
                     issues.append("unencrypted root volume")
                 if issues:
                     _emit("ec2", inst["InstanceId"], "vulnerable", ", ".join(issues))
@@ -503,7 +525,7 @@ def audit_ec2_vulnerabilities() -> list:
                         "InstanceId": inst["InstanceId"],
                         "PublicIP": inst.get("PublicIpAddress", "None"),
                         "IMDSv1_Enabled": (imds_status == "optional"),
-                        "RootVolume_Encrypted": encrypted,
+                        "RootVolume_Encrypted": "unknown" if encrypted is None else encrypted,
                     }
                 )
         return findings if findings else ["No running instances found."]
@@ -747,6 +769,10 @@ def audit_cloudtrail_logging() -> list:
     try:
         trails = ct.describe_trails(includeShadowTrails=False).get("trailList", [])
         if not trails:
+            # Worst case — emit the same signals as every other branch so the
+            # frontend shows it and the compliance row is written.
+            _emit("cloudtrail", "account", "vulnerable", "no CloudTrail trail exists — all API activity unlogged")
+            update_status("check_cloudtrail", "VULNERABLE")
             return [{"status": "NO_TRAILS", "message": "No CloudTrail trails found. All API activity is unlogged."}]
 
         for trail in trails:
