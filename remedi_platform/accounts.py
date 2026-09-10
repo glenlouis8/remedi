@@ -1,6 +1,6 @@
 import json
 import os
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from mcp_server.database import get_connection
 
 
@@ -91,13 +91,13 @@ def get_aws_credentials(user_id: str, account_name: str) -> dict | None:
     if row is None:
         return None
 
+    f = _fernet()  # RuntimeError (key unset) / ValueError (bad key) are real 500s
     try:
-        f = _fernet()
         return {
             "AWS_ACCESS_KEY_ID":     f.decrypt(row[0].encode()).decode(),
             "AWS_SECRET_ACCESS_KEY": f.decrypt(row[1].encode()).decode(),
         }
-    except Exception as exc:
+    except InvalidToken as exc:
         raise CredentialDecryptError(
             f"Could not decrypt stored AWS credentials for '{account_name}': {exc}"
         )
