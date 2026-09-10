@@ -20,7 +20,7 @@ from remedi_platform.auth import get_current_user
 from remedi_platform.accounts import (
     save_aws_credentials, get_aws_credentials, has_aws_account,
     delete_aws_credentials, list_aws_accounts, count_aws_accounts,
-    save_protected_users, get_protected_users,
+    save_protected_users, get_protected_users, seal_json,
 )
 from remedi_platform.compliance import get_cis_score
 from worker import celery_app, run_scan_task
@@ -430,8 +430,12 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     try:
         # Mark as queued before dispatch so stream() knows to keep waiting
         r.set(f"scan:{scan_id}:status", "queued", ex=7200)
+        # Hand the credentials + config to the worker via a short-lived encrypted
+        # Redis key, NOT as a Celery task arg — task args sit in plaintext in the
+        # broker queue and leak into any task-failure traceback.
+        r.set(f"scan:{scan_id}:env", seal_json(env), ex=7200)
         # Hand off to Celery worker — FastAPI is now free
-        run_scan_task.delay(scan_id, user_id, env)
+        run_scan_task.delay(scan_id, user_id)
     except Exception:
         r.decr("active_scans")
         raise HTTPException(status_code=503, detail="Could not start scan. Try again in a few minutes.")

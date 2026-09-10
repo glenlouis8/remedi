@@ -7,6 +7,8 @@ from celery import Celery
 from celery.exceptions import SoftTimeLimitExceeded
 from dotenv import load_dotenv
 
+from remedi_platform.accounts import unseal_json
+
 load_dotenv()
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
@@ -76,15 +78,28 @@ _HARD_TIME_LIMIT = 3000   # 50 min
 
 
 @celery_app.task(bind=True, soft_time_limit=_SOFT_TIME_LIMIT, time_limit=_HARD_TIME_LIMIT)
-def run_scan_task(self, scan_id: str, user_id: str, env: dict):
+def run_scan_task(self, scan_id: str, user_id: str):
     try:
-        _run_scan_task(scan_id, user_id, env)
+        _run_scan_task(scan_id, user_id)
     finally:
         # Release the concurrency slot reserved by /api/run-agent, no matter how we exit.
         _release_scan_slot()
 
 
-def _run_scan_task(scan_id: str, user_id: str, env: dict):
+def _run_scan_task(scan_id: str, user_id: str):
+    # Credentials + config were handed off via a short-lived encrypted Redis key
+    # (see server.py) rather than a Celery arg. Read once, then delete.
+    sealed = r.get(f"scan:{scan_id}:env")
+    r.delete(f"scan:{scan_id}:env")
+    if not sealed:
+        print(f"[worker] no env for {scan_id} (expired or missing) — aborting", flush=True)
+        r.xadd(f"scan:{scan_id}:stream", {"line": "[ERROR] Scan credentials expired before the worker started.\n"})
+        r.xadd(f"scan:{scan_id}:stream", {"line": "__DONE__"})
+        r.set(f"scan:{scan_id}:status", "aborted", ex=7200)
+        r.expire(f"scan:{scan_id}:stream", 7200)
+        return
+    env = unseal_json(sealed)
+
     proc_env = os.environ.copy()
     proc_env.update(env)
     proc_env["PYTHONUNBUFFERED"] = "1"

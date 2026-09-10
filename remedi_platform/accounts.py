@@ -1,3 +1,4 @@
+import json
 import os
 from cryptography.fernet import Fernet
 from mcp_server.database import get_connection
@@ -8,6 +9,16 @@ def _fernet() -> Fernet:
     if not key:
         raise RuntimeError("ENCRYPTION_KEY is not set in environment")
     return Fernet(key.encode())
+
+
+def seal_json(data: dict) -> str:
+    """Fernet-encrypt a dict for short-lived transport (e.g. handing scan
+    credentials to the Celery worker without putting them on the broker)."""
+    return _fernet().encrypt(json.dumps(data).encode()).decode()
+
+
+def unseal_json(token: str) -> dict:
+    return json.loads(_fernet().decrypt(token.encode()).decode())
 
 
 def save_aws_credentials(user_id: str, account_name: str, access_key: str, secret_key: str) -> None:
