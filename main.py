@@ -10,10 +10,10 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 def run_interactive_session():
     """
-    Main execution loop for AEGIS-FLOW.
+    Main execution loop for Remedi.
     Handles the Audit -> Pause -> Remediation workflow.
     """
-    print("🚀 AEGIS-FLOW: SECURE AGENTIC ORCHESTRATION INITIALIZED")
+    print("🚀 REMEDI: SECURE AGENTIC ORCHESTRATION INITIALIZED")
     print("=======================================================")
 
     # 1. Generate scan ID first so it can be used as the LangGraph thread ID.
@@ -169,7 +169,7 @@ def run_interactive_session():
             print(f"\n[{sender}]: {text_to_print}")
 
     print("\n=======================================================")
-    print("🏁 AEGIS-FLOW WORKFLOW COMPLETE")
+    print("🏁 REMEDI WORKFLOW COMPLETE")
     print("=======================================================")
 
 if __name__ == "__main__":

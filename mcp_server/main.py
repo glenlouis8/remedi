@@ -16,7 +16,7 @@ def _emit(service: str, resource: str, status: str, msg: str = "") -> None:
     )
 
 # Initialize the MCP Server
-mcp = FastMCP("Aegis-Hands-Full-Defense")
+mcp = FastMCP("Remedi-Defense")
 
 # Ensure DB is initialized on startup (Critical for Cloud Run)
 init_db()
@@ -269,8 +269,44 @@ def remediate_s3(bucket_name: str) -> str:
                 "RestrictPublicBuckets": True,
             },
         )
+        # Public Access Block neutralizes a public bucket policy, but the policy
+        # itself lingers and re-exposes the bucket the moment PAB is disabled.
+        # Strip any Allow-to-anyone statements so the fix survives a PAB rollback.
+        policy_note = ""
+        try:
+            current = json.loads(s3.get_bucket_policy(Bucket=bucket_name)["Policy"])
+            statements = current.get("Statement", [])
+            if isinstance(statements, dict):
+                statements = [statements]
+
+            def _is_public(stmt: dict) -> bool:
+                if stmt.get("Effect") != "Allow":
+                    return False
+                principal = stmt.get("Principal")
+                if principal == "*":
+                    return True
+                if isinstance(principal, dict):
+                    values = []
+                    for v in principal.values():
+                        values.extend(v if isinstance(v, list) else [v])
+                    return "*" in values
+                return False
+
+            kept = [s for s in statements if not _is_public(s)]
+            if len(kept) != len(statements):
+                if kept:
+                    current["Statement"] = kept
+                    s3.put_bucket_policy(Bucket=bucket_name, Policy=json.dumps(current))
+                    policy_note = " Removed public statement(s) from the bucket policy."
+                else:
+                    s3.delete_bucket_policy(Bucket=bucket_name)
+                    policy_note = " Deleted the fully-public bucket policy."
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code != "NoSuchBucketPolicy":
+                policy_note = f" (bucket policy left untouched — {code or 'ClientError'})"
         update_status("check_s3","SAFE")
-        return f"SUCCESS: Public access blocked for bucket '{bucket_name}'."
+        return f"SUCCESS: Public access blocked for bucket '{bucket_name}'.{policy_note}"
     except Exception as e:
         return f"ERROR: Failed to remediate S3: {str(e)}"
 

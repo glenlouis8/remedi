@@ -32,6 +32,55 @@ def test_remediate_s3_blocks_all_public_access():
 
 
 @mock_aws
+def test_remediate_s3_strips_public_bucket_policy():
+    import json
+    s3 = boto3.client("s3", region_name="us-east-1")
+    s3.create_bucket(Bucket="policy-bucket")
+    s3.put_bucket_policy(Bucket="policy-bucket", Policy=json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [
+            {"Sid": "PublicRead", "Effect": "Allow", "Principal": "*",
+             "Action": "s3:GetObject", "Resource": "arn:aws:s3:::policy-bucket/*"},
+            {"Sid": "KeepMe", "Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::111122223333:root"},
+             "Action": "s3:GetObject", "Resource": "arn:aws:s3:::policy-bucket/*"},
+        ],
+    }))
+
+    from mcp_server.main import remediate_s3
+    result = remediate_s3("policy-bucket")
+    assert "SUCCESS" in result
+
+    remaining = json.loads(s3.get_bucket_policy(Bucket="policy-bucket")["Policy"])["Statement"]
+    sids = {s["Sid"] for s in remaining}
+    assert sids == {"KeepMe"}
+
+
+@mock_aws
+def test_remediate_s3_deletes_fully_public_policy():
+    import json
+    from botocore.exceptions import ClientError
+    s3 = boto3.client("s3", region_name="us-east-1")
+    s3.create_bucket(Bucket="allpublic-bucket")
+    s3.put_bucket_policy(Bucket="allpublic-bucket", Policy=json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [
+            {"Sid": "PublicRead", "Effect": "Allow", "Principal": "*",
+             "Action": "s3:GetObject", "Resource": "arn:aws:s3:::allpublic-bucket/*"},
+        ],
+    }))
+
+    from mcp_server.main import remediate_s3
+    result = remediate_s3("allpublic-bucket")
+    assert "SUCCESS" in result
+
+    try:
+        s3.get_bucket_policy(Bucket="allpublic-bucket")
+        assert False, "policy should have been deleted"
+    except ClientError as e:
+        assert e.response["Error"]["Code"] == "NoSuchBucketPolicy"
+
+
+@mock_aws
 def test_audit_s3_detects_public_bucket():
     s3 = boto3.client("s3", region_name="us-east-1")
     s3.create_bucket(Bucket="public-bucket")

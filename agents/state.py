@@ -5,7 +5,7 @@ from langchain_core.messages import BaseMessage
 
 class AgentState(TypedDict):
     """
-    The state of the Aegis-Flow agent system.
+    The state of the Remedi agent system.
     """
 
     # 1. Chat History: Stores the conversation and tool outputs
