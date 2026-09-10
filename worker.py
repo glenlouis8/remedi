@@ -4,6 +4,7 @@ import sys
 import subprocess
 import redis
 from celery import Celery
+from celery.exceptions import SoftTimeLimitExceeded
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -65,7 +66,16 @@ def _stop_process(process):
         print(f"[worker] error stopping subprocess: {exc}", flush=True)
 
 
-@celery_app.task(bind=True)
+# Hard ceiling on a single scan. The 30-min human-approval wait (blpop timeout)
+# dominates; audit + remediate + verify add a few minutes. soft_time_limit raises
+# SoftTimeLimitExceeded inside the task so cleanup can run; time_limit is the
+# SIGKILL backstop if that cleanup itself wedges. Without these, one stuck scan
+# blocks the single --concurrency=1 worker and queues every future scan behind it.
+_SOFT_TIME_LIMIT = 2700   # 45 min
+_HARD_TIME_LIMIT = 3000   # 50 min
+
+
+@celery_app.task(bind=True, soft_time_limit=_SOFT_TIME_LIMIT, time_limit=_HARD_TIME_LIMIT)
 def run_scan_task(self, scan_id: str, user_id: str, env: dict):
     try:
         _run_scan_task(scan_id, user_id, env)
@@ -125,6 +135,14 @@ def _run_scan_task(scan_id: str, user_id: str, env: dict):
                 process.stdin.write(result[1] + "\n")
                 process.stdin.flush()
                 r.set(f"scan:{scan_id}:status", "running", ex=7200)
+
+    except SoftTimeLimitExceeded:
+        print(f"[worker] scan {scan_id} hit the time limit — aborting", flush=True)
+        final_status = "aborted"
+        try:
+            r.xadd(f"scan:{scan_id}:stream", {"line": "[ERROR] Scan exceeded the time limit and was stopped.\n"}, maxlen=2000)
+        except Exception:
+            pass
 
     except Exception as exc:
         print(f"[worker] scan {scan_id} loop failed: {exc}", flush=True)
