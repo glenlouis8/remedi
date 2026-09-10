@@ -493,9 +493,14 @@ def enforce_imdsv2(instance_id: str) -> str:
     # Metadata options can be set on a running OR stopped instance, but the API
     # rejects calls during the transient 'stopping'/'pending' states with
     # IncorrectInstanceState. When the same instance is also being quarantined
-    # (stop_instance) in parallel, retry through the transition.
+    # (stop_instance) in parallel, retry briefly through the transition.
+    #
+    # Bounded to ~10s: every MCP tool call is serialised through one stdio pipe,
+    # so a long sleep here stalls every other concurrent audit/remediation call
+    # and races the client's 60s timeout. If the instance is still mid-stop after
+    # this window, the next scan re-runs this on the settled (stopped) instance.
     last_err = None
-    for attempt in range(30):
+    for attempt in range(5):
         try:
             ec2.modify_instance_metadata_options(
                 InstanceId=instance_id, HttpTokens="required", HttpEndpoint="enabled"
@@ -504,7 +509,7 @@ def enforce_imdsv2(instance_id: str) -> str:
             return f"SUCCESS: IMDSv2 enforced on {instance_id}."
         except Exception as e:
             last_err = e
-            if "IncorrectInstanceState" in str(e):
+            if "IncorrectInstanceState" in str(e) and attempt < 4:
                 time.sleep(2)
                 continue
             break
