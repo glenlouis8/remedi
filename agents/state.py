@@ -22,9 +22,6 @@ class AgentState(TypedDict):
     # A generated summary of what was found (populated by Auditor before pause)
     audit_summary: Optional[str]
 
-    # A list of critical risks identified (e.g., ["Public S3", "Admin User"])
-    critical_findings: Annotated[List[str], operator.add]
-
     # 4. Metrics Tracking
     scan_id: str
     findings_count: int

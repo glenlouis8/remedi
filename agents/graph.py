@@ -8,23 +8,17 @@ from agents.nodes import (
     report_generator_node,
     remediator_agent,
     safety_gate_node,
-    remediation_tools_list,
     audit_tools_list,
     verifier_agent,
 )
 
-remediation_tool_node = ToolNode(remediation_tools_list)
 verify_tool_node = ToolNode(audit_tools_list)
 
 # --- CONDITIONAL EDGES ---
 
-
-def should_remediate_continue(state: AgentState):
-    last_message = state["messages"][-1]
-    if last_message.tool_calls:
-        return "remediation_tools"
-    return "verifier"
-
+# Note: remediator_agent executes its fixes directly (ThreadPoolExecutor over the
+# MCP tools) and always returns a plain AIMessage — it never emits tool_calls, so
+# there is no remediator<->tools loop in the graph. It goes straight to verifier.
 
 MAX_VERIFY_ITERATIONS = 4
 
@@ -51,7 +45,6 @@ workflow.add_node("orchestrator", orchestrator_node)
 workflow.add_node("report_generator", report_generator_node)
 workflow.add_node("safety_gate", safety_gate_node)
 workflow.add_node("remediator", remediator_agent)
-workflow.add_node("remediation_tools", remediation_tool_node)
 workflow.add_node("verifier", verifier_agent)
 workflow.add_node("verify_tools", verify_tool_node)
 
@@ -62,14 +55,7 @@ workflow.set_entry_point("orchestrator")
 workflow.add_edge("orchestrator", "report_generator")
 workflow.add_edge("report_generator", "safety_gate")
 workflow.add_edge("safety_gate", "remediator")
-
-# Remediation Loop
-workflow.add_conditional_edges(
-    "remediator",
-    should_remediate_continue,
-    {"remediation_tools": "remediation_tools", "verifier": "verifier"},
-)
-workflow.add_edge("remediation_tools", "remediator")
+workflow.add_edge("remediator", "verifier")
 
 # Verification Loop
 workflow.add_conditional_edges(
