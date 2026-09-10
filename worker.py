@@ -78,42 +78,61 @@ def _run_scan_task(scan_id: str, user_id: str, env: dict):
     r.set(f"scan:{scan_id}:owner", user_id, ex=7200)
     r.set(f"scan:{scan_id}:status", "running", ex=7200)
 
-    for line in iter(process.stdout.readline, ""):
-        if not line:
-            continue
+    final_status = "done"
+    try:
+        for line in iter(process.stdout.readline, ""):
+            if not line:
+                continue
 
-        print(line, end="", flush=True)
-        r.xadd(f"scan:{scan_id}:stream", {"line": line}, maxlen=2000)
+            print(line, end="", flush=True)
+            r.xadd(f"scan:{scan_id}:stream", {"line": line}, maxlen=2000)
 
-        if "[ACTION_REQUIRED] WAITING_FOR_APPROVAL" in line:
-            r.set(f"scan:{scan_id}:status", "waiting_approval", ex=7200)
+            if "[ACTION_REQUIRED] WAITING_FOR_APPROVAL" in line:
+                r.set(f"scan:{scan_id}:status", "waiting_approval", ex=7200)
 
-            # Block with zero CPU burn until /api/approve pushes a decision.
-            # timeout=1800 → auto-abort if user never approves within 30 min.
-            result = r_blocking.blpop(f"scan:{scan_id}:decision", timeout=1800)
-            if result is None:
+                # Block with zero CPU burn until /api/approve pushes a decision.
+                # timeout=1800 → auto-abort if user never approves within 30 min.
+                result = r_blocking.blpop(f"scan:{scan_id}:decision", timeout=1800)
+                if result is None or not result[1].startswith("approve"):
+                    final_status = "aborted"
+                    break
+
+                process.stdin.write(result[1] + "\n")
+                process.stdin.flush()
+                r.set(f"scan:{scan_id}:status", "running", ex=7200)
+
+    except Exception as exc:
+        print(f"[worker] scan {scan_id} loop failed: {exc}", flush=True)
+        final_status = "aborted"
+        try:
+            r.xadd(f"scan:{scan_id}:stream", {"line": f"[ERROR] Scan failed: {exc}\n"}, maxlen=2000)
+        except Exception:
+            pass
+
+    finally:
+        # Always run — no matter how the loop exited (EOF, abort, Redis blip,
+        # broken pipe). Without this a mid-scan error orphans the subprocess and
+        # leaves the SSE stream open forever (status stuck 'running', no __DONE__).
+        try:
+            if process.poll() is None:
                 process.terminate()
-                r.set(f"scan:{scan_id}:status", "aborted", ex=7200)
-                return
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+        except Exception as exc:
+            print(f"[worker] error stopping subprocess for {scan_id}: {exc}", flush=True)
 
-            _, decision = result
-            if not decision.startswith("approve"):
-                process.terminate()
-                r.set(f"scan:{scan_id}:status", "aborted", ex=7200)
-                return
-            process.stdin.write(decision + "\n")
-            process.stdin.flush()
-            r.set(f"scan:{scan_id}:status", "running", ex=7200)
-
-    process.wait()
-    r.set(f"scan:{scan_id}:status", "done", ex=7200)
-
-    # Bust cached metrics/history so dashboard shows fresh data after scan
-    r.delete(
-        f"cache:{user_id}:metrics", f"cache:{user_id}:history",
-        f"cache:{user_id}:status", f"cache:{user_id}:compliance", f"cache:{user_id}:breakdown",
-    )
-
-    # Signal stream consumers that output is finished; expire stream after 2 hours
-    r.xadd(f"scan:{scan_id}:stream", {"line": "__DONE__"})
-    r.expire(f"scan:{scan_id}:stream", 7200)
+        try:
+            r.set(f"scan:{scan_id}:status", final_status, ex=7200)
+            # Bust cached metrics/history so dashboard shows fresh data after scan
+            r.delete(
+                f"cache:{user_id}:metrics", f"cache:{user_id}:history",
+                f"cache:{user_id}:status", f"cache:{user_id}:compliance", f"cache:{user_id}:breakdown",
+            )
+            # Signal stream consumers that output is finished; expire stream after 2 hours
+            r.xadd(f"scan:{scan_id}:stream", {"line": "__DONE__"})
+            r.expire(f"scan:{scan_id}:stream", 7200)
+        except Exception as exc:
+            print(f"[worker] error finalizing scan {scan_id}: {exc}", flush=True)
