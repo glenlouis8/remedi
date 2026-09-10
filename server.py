@@ -20,7 +20,7 @@ from remedi_platform.auth import get_current_user
 from remedi_platform.accounts import (
     save_aws_credentials, get_aws_credentials, has_aws_account,
     delete_aws_credentials, list_aws_accounts, count_aws_accounts,
-    save_protected_users, get_protected_users, seal_json,
+    save_protected_users, get_protected_users, seal_json, CredentialDecryptError,
 )
 from remedi_platform.compliance import get_cis_score
 from worker import celery_app, run_scan_task
@@ -216,7 +216,10 @@ def delete_user(user: dict = Depends(get_current_user)):
 @app.get("/api/iam/users")
 def list_iam_users(account_name: str = "Default", user: dict = Depends(get_current_user)):
     import boto3, botocore.exceptions
-    creds = get_aws_credentials(user["sub"], account_name)
+    try:
+        creds = get_aws_credentials(user["sub"], account_name)
+    except CredentialDecryptError:
+        raise HTTPException(status_code=409, detail="Stored AWS credentials could not be read. Please reconnect your AWS account.")
     if not creds:
         raise HTTPException(status_code=400, detail="No AWS account connected.")
     try:
@@ -387,7 +390,10 @@ MAX_CONCURRENT_SCANS = 3
 @app.post("/api/run-agent")
 def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     user_id = user["sub"]
-    creds = get_aws_credentials(user_id, body.account_name)
+    try:
+        creds = get_aws_credentials(user_id, body.account_name)
+    except CredentialDecryptError:
+        raise HTTPException(status_code=409, detail="Stored AWS credentials could not be read. Please reconnect your AWS account.")
     if not creds:
         raise HTTPException(status_code=400, detail="No AWS account connected. Please complete onboarding first.")
 

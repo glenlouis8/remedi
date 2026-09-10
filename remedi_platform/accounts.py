@@ -4,6 +4,10 @@ from cryptography.fernet import Fernet
 from mcp_server.database import get_connection
 
 
+class CredentialDecryptError(Exception):
+    """Stored ciphertext could not be decrypted — usually ENCRYPTION_KEY rotated."""
+
+
 def _fernet() -> Fernet:
     key = os.environ.get("ENCRYPTION_KEY")
     if not key:
@@ -65,11 +69,16 @@ def get_aws_credentials(user_id: str, account_name: str) -> dict | None:
     if row is None:
         return None
 
-    f = _fernet()
-    return {
-        "AWS_ACCESS_KEY_ID":     f.decrypt(row[0].encode()).decode(),
-        "AWS_SECRET_ACCESS_KEY": f.decrypt(row[1].encode()).decode(),
-    }
+    try:
+        f = _fernet()
+        return {
+            "AWS_ACCESS_KEY_ID":     f.decrypt(row[0].encode()).decode(),
+            "AWS_SECRET_ACCESS_KEY": f.decrypt(row[1].encode()).decode(),
+        }
+    except Exception as exc:
+        raise CredentialDecryptError(
+            f"Could not decrypt stored AWS credentials for '{account_name}': {exc}"
+        )
 
 
 def list_aws_accounts(user_id: str) -> list[dict]:
