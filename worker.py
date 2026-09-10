@@ -87,26 +87,31 @@ def run_scan_task(self, scan_id: str, user_id: str):
 
 
 def _run_scan_task(scan_id: str, user_id: str):
-    # Credentials + config were handed off via a short-lived encrypted Redis key
-    # (see server.py) rather than a Celery arg. Read once, then delete.
-    sealed = r.get(f"scan:{scan_id}:env")
-    r.delete(f"scan:{scan_id}:env")
-    if not sealed:
-        print(f"[worker] no env for {scan_id} (expired or missing) — aborting", flush=True)
-        r.xadd(f"scan:{scan_id}:stream", {"line": "[ERROR] Scan credentials expired before the worker started.\n"})
-        r.xadd(f"scan:{scan_id}:stream", {"line": "__DONE__"})
-        r.set(f"scan:{scan_id}:status", "aborted", ex=7200)
-        r.expire(f"scan:{scan_id}:stream", 7200)
-        return
-    env = unseal_json(sealed)
-
-    proc_env = os.environ.copy()
-    proc_env.update(env)
-    proc_env["PYTHONUNBUFFERED"] = "1"
-    proc_env["REMEDI_SCAN_ID"] = scan_id
-
-    print(f"[worker] spawning main.py for {scan_id} with python={sys.executable}", flush=True)
+    # One guarded body: EVERY exit path — cred-key missing, unseal failure, spawn
+    # failure, Redis blip, broken pipe, time limit, clean EOF — lands in the
+    # `finally`, which kills the subprocess and always writes a terminal status +
+    # __DONE__. Without that the SSE stream in server.py never closes (status
+    # stuck 'queued'/'running', no __DONE__) and leaks a thread + connection per
+    # connected client forever.
+    process = None
+    final_status = "aborted"
+    error_line = None
     try:
+        # Credentials + config were handed off via a short-lived encrypted Redis
+        # key (see server.py) rather than a Celery arg. Read once, then delete.
+        sealed = r.get(f"scan:{scan_id}:env")
+        r.delete(f"scan:{scan_id}:env")
+        if not sealed:
+            error_line = "[ERROR] Scan credentials expired before the worker started.\n"
+            return
+        env = unseal_json(sealed)
+
+        proc_env = os.environ.copy()
+        proc_env.update(env)
+        proc_env["PYTHONUNBUFFERED"] = "1"
+        proc_env["REMEDI_SCAN_ID"] = scan_id
+
+        print(f"[worker] spawning main.py for {scan_id} with python={sys.executable}", flush=True)
         process = subprocess.Popen(
             [sys.executable, "-u", "main.py"],
             stdin=subprocess.PIPE,
@@ -117,19 +122,12 @@ def _run_scan_task(scan_id: str, user_id: str):
             bufsize=1,
             start_new_session=True,  # own process group — see _stop_process
         )
-    except Exception as exc:
-        print(f"[worker] failed to spawn main.py: {exc}", flush=True)
-        r.publish(f"scan:{scan_id}:output", f"[ERROR] Could not start scan process: {exc}\n")
-        r.publish(f"scan:{scan_id}:output", "__DONE__")
-        r.set(f"scan:{scan_id}:status", "done", ex=7200)
-        return
 
-    # Store owner so /api/approve can verify the caller owns this scan
-    r.set(f"scan:{scan_id}:owner", user_id, ex=7200)
-    r.set(f"scan:{scan_id}:status", "running", ex=7200)
+        # Store owner so /api/approve can verify the caller owns this scan
+        r.set(f"scan:{scan_id}:owner", user_id, ex=7200)
+        r.set(f"scan:{scan_id}:status", "running", ex=7200)
 
-    final_status = "done"
-    try:
+        final_status = "done"
         for line in iter(process.stdout.readline, ""):
             if not line:
                 continue
@@ -154,26 +152,19 @@ def _run_scan_task(scan_id: str, user_id: str):
     except SoftTimeLimitExceeded:
         print(f"[worker] scan {scan_id} hit the time limit — aborting", flush=True)
         final_status = "aborted"
-        try:
-            r.xadd(f"scan:{scan_id}:stream", {"line": "[ERROR] Scan exceeded the time limit and was stopped.\n"}, maxlen=2000)
-        except Exception:
-            pass
+        error_line = "[ERROR] Scan exceeded the time limit and was stopped.\n"
 
     except Exception as exc:
-        print(f"[worker] scan {scan_id} loop failed: {exc}", flush=True)
+        print(f"[worker] scan {scan_id} failed: {exc}", flush=True)
         final_status = "aborted"
-        try:
-            r.xadd(f"scan:{scan_id}:stream", {"line": f"[ERROR] Scan failed: {exc}\n"}, maxlen=2000)
-        except Exception:
-            pass
+        error_line = f"[ERROR] Scan failed: {exc}\n"
 
     finally:
-        # Always run — no matter how the loop exited (EOF, abort, Redis blip,
-        # broken pipe). Without this a mid-scan error orphans the subprocess and
-        # leaves the SSE stream open forever (status stuck 'running', no __DONE__).
-        _stop_process(process)
-
+        if process is not None:
+            _stop_process(process)
         try:
+            if error_line:
+                r.xadd(f"scan:{scan_id}:stream", {"line": error_line}, maxlen=2000)
             r.set(f"scan:{scan_id}:status", final_status, ex=7200)
             # Bust cached metrics/history so dashboard shows fresh data after scan
             r.delete(
