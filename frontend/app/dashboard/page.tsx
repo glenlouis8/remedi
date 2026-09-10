@@ -188,6 +188,7 @@ export default function Dashboard() {
   const dropdownRef                         = useRef<HTMLDivElement>(null);
   const iamPickerRef                        = useRef<HTMLDivElement>(null);
   const abortRef                            = useRef<AbortController | null>(null);
+  const scanBusyRef                         = useRef(false);
 
   // Stop the SSE scan stream if the user navigates away mid-scan
   useEffect(() => {
@@ -307,6 +308,12 @@ export default function Dashboard() {
   }, [scanState, getToken]);
 
   const startScan = async () => {
+    // Re-entrancy guard: a double-click (or a second trigger before React
+    // re-renders) would fire two /api/run-agent requests — two Celery scans,
+    // two reader loops, and abortRef clobbered so only one is stoppable.
+    if (scanBusyRef.current) return;
+    scanBusyRef.current = true;
+
     setScanState('scanning');
     setScanError(null);
     setScanItems({});
@@ -455,6 +462,7 @@ export default function Dashboard() {
     } catch (err: unknown) {
       if ((err as Error).name === 'AbortError') wasAborted = true;
     } finally {
+      scanBusyRef.current = false;
       setActiveService(null);
       if (wasAborted) {
         setScanState('idle');
