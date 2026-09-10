@@ -610,6 +610,18 @@ def remediator_agent(state: AgentState):
         approved_resources = state.get("approved_resources")  # None = all approved
         protected_users_lower = {u.lower() for u in _get_protected_users()}
 
+        # Drift guard: report_generator counted N findings, but the strict line
+        # parser matched none. That means the report format drifted — fail loud
+        # instead of "succeeding" with zero fixes and letting the verifier
+        # rubber-stamp a scan that changed nothing.
+        raw_match_count = len(pattern.findall(summary))
+        expected_findings = state.get("findings_count", 0)
+        if expected_findings and raw_match_count == 0:
+            raise ValueError(
+                f"Remediation parser matched 0 lines but the report lists "
+                f"{expected_findings} finding(s) — report format drift."
+            )
+
         tasks = []
         seen = set()
         for match in pattern.finditer(summary):
