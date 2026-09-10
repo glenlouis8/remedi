@@ -1,5 +1,16 @@
 import re
 
+# Specialist sub-agents emit findings as:
+#   FINDING: <resource> | SEVERITY: <CRITICAL|HIGH|MEDIUM> | REASON: <...> [| FIX: <...>]
+# re.MULTILINE so every line in a multi-finding block matches — without it `$`
+# only matches end-of-string and all but the last finding are silently dropped.
+# Lives here (side-effect-free module) so both call sites in nodes.py and the
+# tests import one copy instead of maintaining drift-prone duplicates.
+FINDING_PATTERN = re.compile(
+    r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+?)\s*(?:\|\s*FIX:\s*(.+?))?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
 # The report generator emits lines in exactly this format — the remediator
 # regex-parses them with no LLM step. Changing this pattern requires updating
 # the report generator prompt too (see agents/nodes.py). Kept in its own

@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 from agents.state import AgentState
-from agents.patterns import REMEDIATION_LINE_PATTERN
+from agents.patterns import REMEDIATION_LINE_PATTERN, FINDING_PATTERN
 from agents.mcp_client import get_all_tools, get_tools_by_name
 from mcp_server.database import start_scan, update_scan, log_remediation, update_status, reset_to_vulnerable
 import datetime
@@ -99,10 +99,7 @@ def _run_sub_agent(
         SystemMessage(content=prompt + protected_clause),
         HumanMessage(content="Begin your audit now."),
     ]
-    finding_pattern = re.compile(
-        r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+?)\s*(?:\|\s*FIX:\s*(.+?))?\s*$",
-        re.IGNORECASE | re.MULTILINE,
-    )
+    finding_pattern = FINDING_PATTERN
     accumulated_findings: list[str] = []
 
     MAX_TOOL_ITERATIONS = 15
@@ -332,11 +329,7 @@ def orchestrator_node(state: AgentState):
                 svc_key = _SVC_KEY.get(svc, svc.lower())
 
                 # Parse FINDING lines to emit one [SCAN] event per actual resource
-                finding_pattern = re.compile(
-                    r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+?)\s*(?:\|\s*FIX:\s*(.+?))?\s*$",
-                    re.IGNORECASE | re.MULTILINE,
-                )
-                parsed_findings = finding_pattern.findall(text)
+                parsed_findings = FINDING_PATTERN.findall(text)
 
                 if parsed_findings:
                     seen_resources = set()
