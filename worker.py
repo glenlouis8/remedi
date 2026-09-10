@@ -1,4 +1,5 @@
 import os
+import signal
 import sys
 import subprocess
 import redis
@@ -41,6 +42,29 @@ def _release_scan_slot():
         print(f"[worker] could not release scan slot: {exc}", flush=True)
 
 
+def _stop_process(process):
+    """Stop the scan subprocess and everything it spawned — the MCP server and
+    the AWS worker threads. main.py is launched with start_new_session=True, so
+    it leads its own process group; signalling the group reaches the children
+    too. terminate()/kill() on the Popen object alone would only hit main.py."""
+    if process.poll() is not None:
+        return
+    try:
+        pgid = os.getpgid(process.pid)
+        send = lambda sig: os.killpg(pgid, sig)
+    except Exception:
+        send = process.send_signal
+    try:
+        send(signal.SIGTERM)
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            send(signal.SIGKILL)
+            process.wait()
+    except Exception as exc:
+        print(f"[worker] error stopping subprocess: {exc}", flush=True)
+
+
 @celery_app.task(bind=True)
 def run_scan_task(self, scan_id: str, user_id: str, env: dict):
     try:
@@ -66,6 +90,7 @@ def _run_scan_task(scan_id: str, user_id: str, env: dict):
             env=proc_env,
             text=True,
             bufsize=1,
+            start_new_session=True,  # own process group — see _stop_process
         )
     except Exception as exc:
         print(f"[worker] failed to spawn main.py: {exc}", flush=True)
@@ -113,16 +138,7 @@ def _run_scan_task(scan_id: str, user_id: str, env: dict):
         # Always run — no matter how the loop exited (EOF, abort, Redis blip,
         # broken pipe). Without this a mid-scan error orphans the subprocess and
         # leaves the SSE stream open forever (status stuck 'running', no __DONE__).
-        try:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-        except Exception as exc:
-            print(f"[worker] error stopping subprocess for {scan_id}: {exc}", flush=True)
+        _stop_process(process)
 
         try:
             r.set(f"scan:{scan_id}:status", final_status, ex=7200)
