@@ -352,14 +352,21 @@ def remediate_vpc_flow_logs(vpc_id: str) -> str:
 
         role_arn = iam.get_role(RoleName=role_name)["Role"]["Arn"]
 
-        # 3. Enable Flow Logs
-        ec2.create_flow_logs(
+        # 3. Enable Flow Logs. create_flow_logs does NOT raise on partial
+        # failure — failures land in the Unsuccessful list (e.g. the freshly
+        # created IAM role not yet propagated). Check it before claiming success.
+        resp = ec2.create_flow_logs(
             ResourceIds=[vpc_id],
             ResourceType="VPC",
             TrafficType="ALL",
             LogGroupName=log_group_name,
             DeliverLogsPermissionArn=role_arn,
         )
+        unsuccessful = resp.get("Unsuccessful", [])
+        if unsuccessful:
+            reason = unsuccessful[0].get("Error", {}).get("Message", str(unsuccessful[0]))
+            return f"ERROR: Flow logs not enabled for {vpc_id}: {reason}"
+
         update_status("check_vpc","SAFE")
         return (
             f"SUCCESS: Flow Logs enabled for {vpc_id}. "
@@ -783,9 +790,11 @@ def remediate_cloudtrail(trail_name: str = "remedi-audit-trail") -> str:
         trails = ct.describe_trails(includeShadowTrails=False).get("trailList", [])
 
         if not trails:
-            # No trails — create one from scratch
+            # No trails — create one from scratch. Use TARGET_REGION: the s3
+            # client from get_boto_client() is pinned to it, so a LocationConstraint
+            # from a different region would raise IllegalLocationConstraint.
             account_id = sts.get_caller_identity()["Account"]
-            region = boto3.Session().region_name or "us-east-1"
+            region = TARGET_REGION
             bucket_name = f"remedi-cloudtrail-{account_id}-{region}"
 
             # Create the S3 bucket
