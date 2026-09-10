@@ -326,6 +326,7 @@ export default function Dashboard() {
     setRemediationPlan([]);
     setRemediationSteps([]);
     setResourceReasons({});
+    setCurrentScanId(null);  // don't let a missed log line approve the previous scan
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -530,6 +531,10 @@ export default function Dashboard() {
   };
 
   const handleApprove = async () => {
+    if (!currentScanId) {
+      setScanError('Could not identify the scan to approve — please rerun the scan.');
+      return;
+    }
     setScanState('remediating');
     try {
       const token = await getToken();
@@ -821,7 +826,12 @@ export default function Dashboard() {
                     <button
                       onClick={async () => {
                         const token = await getToken();
-                        await fetch(`${API}/api/accounts`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }).catch(console.error);
+                        const wipe = () => fetch(`${API}/api/accounts`, {
+                          method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+                        }).then(r => r.ok).catch(() => false);
+                        // Best-effort wipe with one retry; the 30-min inactivity
+                        // purge is the backstop if both attempts fail.
+                        if (!(await wipe())) await wipe();
                         signOut({ redirectUrl: '/' });
                       }}
                       className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-slate-500 hover:text-slate-200 hover:bg-white/5 transition-colors text-left"
