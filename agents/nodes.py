@@ -333,8 +333,8 @@ def orchestrator_node(state: AgentState):
 
                 # Parse FINDING lines to emit one [SCAN] event per actual resource
                 finding_pattern = re.compile(
-                    r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+?)\s*(?:\|\s*FIX:\s*(.+))?$",
-                    re.IGNORECASE,
+                    r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+?)\s*(?:\|\s*FIX:\s*(.+?))?\s*$",
+                    re.IGNORECASE | re.MULTILINE,
                 )
                 parsed_findings = finding_pattern.findall(text)
 
