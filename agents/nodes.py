@@ -846,11 +846,13 @@ def verifier_agent(state: AgentState):
             "enable_cloudtrail": "remediate_cloudtrail",
             "fix_cloudtrail": "remediate_cloudtrail",
         }
+        # Parse with the SAME pattern the remediator used, so a report line the
+        # remediator acted on can't be missed here (which would leave the control
+        # VULNERABLE despite a verified fix). Group 2 is the tool name.
         summary = state.get("audit_summary", "")
-        call_pattern = re.compile(r'I will call [`\'"]?(\w+)[`\'"]?')
         updated = set()
-        for m in call_pattern.finditer(summary):
-            tool_name = _INTENT_TO_TOOL.get(m.group(1), m.group(1))
+        for m in REMEDIATION_LINE_PATTERN.finditer(summary):
+            tool_name = _INTENT_TO_TOOL.get(m.group(2), m.group(2))
             check_id = _TOOL_TO_CIS.get(tool_name)
             if check_id and check_id not in updated:
                 update_status(check_id, "SAFE")
