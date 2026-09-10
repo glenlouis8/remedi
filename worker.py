@@ -141,11 +141,23 @@ def _run_scan_task(scan_id: str, user_id: str):
                 # Block with zero CPU burn until /api/approve pushes a decision.
                 # timeout=1800 → auto-abort if user never approves within 30 min.
                 result = r_blocking.blpop(f"scan:{scan_id}:decision", timeout=1800)
-                if result is None or not result[1].startswith("approve"):
+                if result is None:
                     final_status = "aborted"
                     break
 
-                process.stdin.write(result[1] + "\n")
+                decision = result[1]
+                if not decision.startswith("approve"):
+                    # A user who approved then closed the tab queues [abort, approve];
+                    # blpop popped one — prefer an explicit approve if it's still queued.
+                    queued = r.lrange(f"scan:{scan_id}:decision", 0, -1)
+                    approve = next((d for d in queued if d.startswith("approve")), None)
+                    if approve is None:
+                        final_status = "aborted"
+                        break
+                    decision = approve
+
+                r.delete(f"scan:{scan_id}:decision")
+                process.stdin.write(decision + "\n")
                 process.stdin.flush()
                 r.set(f"scan:{scan_id}:status", "running", ex=7200)
 

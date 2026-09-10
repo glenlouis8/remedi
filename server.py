@@ -434,8 +434,10 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=503, detail="Server is busy with other scans. Try again in a few minutes.")
 
     try:
-        # Mark as queued before dispatch so stream() knows to keep waiting
+        # Mark as queued + record owner before dispatch so stream() keeps waiting
+        # and /api/stop|/api/approve work even while the scan is still queued.
         r.set(f"scan:{scan_id}:status", "queued", ex=7200)
+        r.set(f"scan:{scan_id}:owner", user_id, ex=7200)
         # Hand the credentials + config to the worker via a short-lived encrypted
         # Redis key, NOT as a Celery task arg — task args sit in plaintext in the
         # broker queue and leak into any task-failure traceback.
@@ -449,15 +451,20 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
     def stream():
         stream_key = f"scan:{scan_id}:stream"
         last_id = "0"  # read from the very beginning — catches messages published before subscribe
+        consecutive_errors = 0
         try:
             while True:
                 try:
                     results = r_stream.xread({stream_key: last_id}, block=5000, count=100)
+                    consecutive_errors = 0
                 except Exception:
                     status = r.get(f"scan:{scan_id}:status")
                     if status in ("done", "aborted"):
                         return
-                    # SSE comment — keeps Render's proxy from buffering/closing on errors
+                    consecutive_errors += 1
+                    if consecutive_errors > 60:  # ~1 min of solid Redis failure
+                        return
+                    time.sleep(1)  # back off — don't hot-loop on a broken connection
                     yield ": heartbeat\n"
                     continue
                 if results:
@@ -476,8 +483,13 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
                     # SSE comment — keeps Render's proxy from buffering while waiting for output
                     yield ": heartbeat\n"
         except GeneratorExit:
-            # client disconnected (tab closed / refresh) — abort waiting worker
-            r.lpush(f"scan:{scan_id}:decision", "abort")
+            # Client disconnected (tab closed / refresh). Only signal abort while
+            # the scan is still queued or at the approval gate — never once it's
+            # past approval, where the entry would just be stale litter.
+            status = r.get(f"scan:{scan_id}:status")
+            if status in ("queued", "waiting_approval"):
+                r.lpush(f"scan:{scan_id}:decision", "abort")
+                r.expire(f"scan:{scan_id}:decision", 7200)
 
     return StreamingResponse(
         stream(),
