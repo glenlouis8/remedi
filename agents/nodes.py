@@ -665,6 +665,13 @@ def remediator_agent(state: AgentState):
             try:
                 result_str = func.invoke(valid_args)
                 duration = (datetime.datetime.now() - start_time).total_seconds()
+                # A tool can decline without raising (e.g. restrict_iam_user
+                # hitting its protected-user guard) — don't count that as a fix.
+                stripped = str(result_str).lstrip()
+                if stripped.startswith(("REFUSED:", "SKIPPED:")):
+                    return (resource, real_name, args, f"⚠️ {result_str}", "SKIPPED", duration)
+                if stripped.startswith("ERROR:"):
+                    return (resource, real_name, args, f"❌ {result_str}", "ERROR", duration)
                 return (
                     resource,
                     real_name,
