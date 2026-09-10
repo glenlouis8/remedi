@@ -94,6 +94,16 @@ def init_db():
         c.execute("ALTER TABLE aws_accounts ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         c.execute("ALTER TABLE aws_accounts ADD COLUMN IF NOT EXISTS account_name TEXT NOT NULL DEFAULT 'Default'")
         c.execute("ALTER TABLE aws_accounts ADD COLUMN IF NOT EXISTS protected_users TEXT DEFAULT ''")
+        # Migration: make the credential timestamps tz-aware so the 30-min purge
+        # (NOW() - INTERVAL) is correct regardless of a connection's TimeZone.
+        c.execute("""
+            SELECT data_type FROM information_schema.columns
+            WHERE table_name = 'aws_accounts' AND column_name = 'last_used_at' AND table_schema = 'public'
+        """)
+        _lu = c.fetchone()
+        if _lu and _lu[0] == 'timestamp without time zone':
+            c.execute("ALTER TABLE aws_accounts ALTER COLUMN last_used_at TYPE timestamptz USING last_used_at AT TIME ZONE 'UTC'")
+            c.execute("ALTER TABLE aws_accounts ALTER COLUMN created_at TYPE timestamptz USING created_at AT TIME ZONE 'UTC'")
         # Migration: promote PK from user_id-only to (user_id, account_name) if needed
         c.execute("""
             SELECT COUNT(kcu.column_name)
@@ -214,9 +224,18 @@ def start_scan(scan_id: str, user_id: str | None = None, account_name: str = "De
     finally:
         conn.close()
 
+_SCAN_UPDATE_COLUMNS = {
+    "user_id", "start_time", "end_time", "findings_count", "remediations_count",
+    "status", "gate_time", "verified", "audit_summary", "account_name",
+}
+
+
 def update_scan(scan_id: str, **kwargs):
     if not kwargs:
         return
+    bad = set(kwargs) - _SCAN_UPDATE_COLUMNS
+    if bad:
+        raise ValueError(f"update_scan: refusing unknown column(s): {sorted(bad)}")
     conn = get_connection()
     try:
         c = conn.cursor()
