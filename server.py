@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sys
 import signal
 import threading
@@ -510,7 +511,14 @@ def approve_remediation(body: ApproveRequest, user: dict = Depends(get_current_u
 
     payload = "approve"
     if body.approved_resources:
-        payload = "approve:" + ",".join(body.approved_resources)
+        # The payload is newline-delimited into the scan subprocess's stdin and
+        # comma-split there — reject anything that could break that framing.
+        safe = []
+        for res in body.approved_resources:
+            if not re.fullmatch(r"[A-Za-z0-9_.:/\-]{1,256}", res or ""):
+                raise HTTPException(status_code=400, detail=f"Invalid resource identifier: {res!r}")
+            safe.append(res)
+        payload = "approve:" + ",".join(safe)
 
     # lpush unblocks the worker's blpop immediately
     r.lpush(f"scan:{body.scan_id}:decision", payload)
