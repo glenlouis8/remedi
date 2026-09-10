@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from agents.state import AgentState
 from agents.patterns import REMEDIATION_LINE_PATTERN
 from agents.mcp_client import get_all_tools, get_tools_by_name
-from mcp_server.database import start_scan, update_scan, log_remediation, update_status
+from mcp_server.database import start_scan, update_scan, log_remediation, update_status, reset_to_vulnerable
 import datetime
 
 load_dotenv()
@@ -293,6 +293,11 @@ def orchestrator_node(state: AgentState):
     user_id = os.environ.get("REMEDI_USER_ID")
     account_name = os.environ.get("REMEDI_ACCOUNT_NAME", "Default")
     start_scan(scan_id, user_id=user_id, account_name=account_name)
+    # Assume every control is vulnerable until THIS scan re-proves it safe.
+    # Without this, a check left SAFE by a prior scan stays SAFE (and counts as
+    # passing) if this scan's report generator errors before rewriting statuses.
+    if user_id:
+        reset_to_vulnerable(user_id)
 
     tasks = [
         (
