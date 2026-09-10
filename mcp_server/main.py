@@ -372,19 +372,22 @@ def audit_security_groups() -> list:
         sgs = ec2.describe_security_groups()["SecurityGroups"]
         for sg in sgs:
             for perm in sg["IpPermissions"]:
-                for ip_range in perm.get("IpRanges", []):
-                    if ip_range.get("CidrIp") == "0.0.0.0/0":
-                        port = perm.get("FromPort", "all")
-                        _emit("sg", sg["GroupId"], "vulnerable", f"port {port} open to 0.0.0.0/0")
-                        risky_groups.append(
-                                {
-                                    "GroupId": sg["GroupId"],
-                                    "Port": port,
-                                    "Protocol": perm.get("IpProtocol"),
-                                    "Risk": "OPEN TO WORLD (0.0.0.0/0)",
-                                }
-                            )
-        
+                world_open = (
+                    any(r.get("CidrIp") == "0.0.0.0/0" for r in perm.get("IpRanges", []))
+                    or any(r.get("CidrIpv6") == "::/0" for r in perm.get("Ipv6Ranges", []))
+                )
+                if world_open:
+                    port = perm.get("FromPort", "all")
+                    _emit("sg", sg["GroupId"], "vulnerable", f"port {port} open to the internet")
+                    risky_groups.append(
+                        {
+                            "GroupId": sg["GroupId"],
+                            "Port": port,
+                            "Protocol": perm.get("IpProtocol"),
+                            "Risk": "OPEN TO WORLD (0.0.0.0/0)",
+                        }
+                    )
+
         if not risky_groups:
             update_status("check_ssh", "SAFE")
             return ["No risky Security Groups found. System is SAFE."]
@@ -403,28 +406,35 @@ def revoke_security_group_ingress(group_id: str) -> str:
     ec2 = get_boto_client("ec2")
     try:
         sg = ec2.describe_security_groups(GroupIds=[group_id])["SecurityGroups"][0]
-        public_rules = [
-            perm for perm in sg["IpPermissions"]
-            if any(r.get("CidrIp") == "0.0.0.0/0" for r in perm.get("IpRanges", []))
-        ]
 
-        if not public_rules:
+        # Rebuild each internet-open permission with ONLY the world ranges
+        # (0.0.0.0/0 and ::/0). Drop UserIdGroupPairs / PrefixListIds / narrower
+        # CIDRs that may share the same permission block, so revoking the public
+        # rule doesn't also tear down peer-SG or private access on that port.
+        rules_to_revoke = []
+        for perm in sg["IpPermissions"]:
+            v4 = [r for r in perm.get("IpRanges", []) if r.get("CidrIp") == "0.0.0.0/0"]
+            v6 = [r for r in perm.get("Ipv6Ranges", []) if r.get("CidrIpv6") == "::/0"]
+            if not (v4 or v6):
+                continue
+            stripped = {
+                k: v for k, v in perm.items()
+                if k not in ("IpRanges", "Ipv6Ranges", "UserIdGroupPairs", "PrefixListIds")
+            }
+            if v4:
+                stripped["IpRanges"] = [{"CidrIp": "0.0.0.0/0"}]
+            if v6:
+                stripped["Ipv6Ranges"] = [{"CidrIpv6": "::/0"}]
+            rules_to_revoke.append(stripped)
+
+        if not rules_to_revoke:
             update_status("check_ssh", "SAFE")
             return f"SUCCESS: No public ingress rules found on {group_id} (already clean)."
 
-        # Strip to only the 0.0.0.0/0 CidrIp ranges so we don't accidentally
-        # revoke private rules on the same permission
-        rules_to_revoke = []
-        for perm in public_rules:
-            rules_to_revoke.append({
-                **{k: v for k, v in perm.items() if k != "IpRanges"},
-                "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
-            })
-
         ec2.revoke_security_group_ingress(GroupId=group_id, IpPermissions=rules_to_revoke)
-        ports = [str(p.get("FromPort", "all")) for p in public_rules]
+        ports = [str(p.get("FromPort", "all")) for p in rules_to_revoke]
         update_status("check_ssh", "SAFE")
-        return f"SUCCESS: Revoked all 0.0.0.0/0 ingress rules on {group_id} (ports: {', '.join(ports)})."
+        return f"SUCCESS: Revoked all internet-open ingress rules on {group_id} (ports: {', '.join(ports)})."
     except ClientError as e:
         if e.response["Error"]["Code"] == "InvalidPermission.NotFound":
             update_status("check_ssh", "SAFE")
