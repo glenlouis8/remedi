@@ -21,7 +21,8 @@ from remedi_platform.auth import get_current_user
 from remedi_platform.accounts import (
     save_aws_credentials, get_aws_credentials, has_aws_account,
     delete_aws_credentials, list_aws_accounts, count_aws_accounts,
-    save_protected_users, get_protected_users, seal_json, CredentialDecryptError,
+    save_protected_users, get_protected_users, seal_json,
+    CredentialDecryptError, AccountLimitError,
 )
 from remedi_platform.compliance import get_cis_score
 from worker import celery_app, run_scan_task
@@ -136,7 +137,10 @@ def connect_aws(creds: AWSCredentials, user: dict = Depends(get_current_user)):
     is_new = not any(a["account_name"] == creds.account_name for a in accounts)
     if is_new and existing >= 3:
         raise HTTPException(status_code=400, detail="Maximum of 3 AWS accounts allowed per user")
-    save_aws_credentials(user_id, creds.account_name.strip(), creds.access_key, creds.secret_key)
+    try:
+        save_aws_credentials(user_id, creds.account_name.strip(), creds.access_key, creds.secret_key)
+    except AccountLimitError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return {"status": "connected", "account_name": creds.account_name.strip()}
 
 

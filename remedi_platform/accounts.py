@@ -4,8 +4,15 @@ from cryptography.fernet import Fernet
 from mcp_server.database import get_connection
 
 
+MAX_ACCOUNTS_PER_USER = 3
+
+
 class CredentialDecryptError(Exception):
     """Stored ciphertext could not be decrypted — usually ENCRYPTION_KEY rotated."""
+
+
+class AccountLimitError(Exception):
+    """User is already at MAX_ACCOUNTS_PER_USER connected accounts."""
 
 
 def _fernet() -> Fernet:
@@ -33,20 +40,32 @@ def save_aws_credentials(user_id: str, account_name: str, access_key: str, secre
     conn = get_connection()
     try:
         c = conn.cursor()
+        # Atomic cap enforcement: the row is inserted only if the user is under
+        # the limit OR this account_name already exists (an update). Two
+        # concurrent "add a 3rd account" calls can't both slip through.
         c.execute(
             """
             INSERT INTO aws_accounts (user_id, account_name, access_key_enc, secret_key_enc, last_used_at)
-            VALUES (%s, %s, %s, %s, NOW())
+            SELECT %(uid)s, %(name)s, %(ak)s, %(sk)s, NOW()
+            WHERE (SELECT COUNT(*) FROM aws_accounts WHERE user_id = %(uid)s) < %(cap)s
+               OR EXISTS (SELECT 1 FROM aws_accounts WHERE user_id = %(uid)s AND account_name = %(name)s)
             ON CONFLICT (user_id, account_name) DO UPDATE
               SET access_key_enc = EXCLUDED.access_key_enc,
                   secret_key_enc = EXCLUDED.secret_key_enc,
                   last_used_at   = NOW()
             """,
-            (user_id, account_name, access_key_enc, secret_key_enc),
+            {"uid": user_id, "name": account_name, "ak": access_key_enc,
+             "sk": secret_key_enc, "cap": MAX_ACCOUNTS_PER_USER},
         )
+        inserted = c.rowcount
         conn.commit()
     finally:
         conn.close()
+
+    if inserted == 0:
+        raise AccountLimitError(
+            f"Maximum of {MAX_ACCOUNTS_PER_USER} AWS accounts allowed per user"
+        )
 
 
 def get_aws_credentials(user_id: str, account_name: str) -> dict | None:
