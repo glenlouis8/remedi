@@ -516,6 +516,10 @@ def approve_remediation(body: ApproveRequest, user: dict = Depends(get_current_u
     if owner != user["sub"]:
         raise HTTPException(status_code=403, detail="Not your scan")
 
+    status = r.get(f"scan:{body.scan_id}:status")
+    if status in (None, "done", "aborted"):
+        raise HTTPException(status_code=409, detail="This scan is not awaiting approval.")
+
     payload = "approve"
     if body.approved_resources:
         # The payload is newline-delimited into the scan subprocess's stdin and

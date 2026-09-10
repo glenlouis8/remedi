@@ -201,10 +201,14 @@ export default function Dashboard() {
       try {
         const token = await getToken();
         const res = await fetch(`${API}/api/accounts/status`, { headers: { Authorization: `Bearer ${token}` } });
-        if (res.ok) {
-          const data = await res.json();
-          if (!data.connected) { router.replace('/onboarding'); return; }
+        if (!res.ok) {
+          // 401 (expired token) / 5xx — don't render a broken dashboard shell
+          // whose every fetch then fails silently.
+          router.replace('/onboarding');
+          return;
         }
+        const data = await res.json();
+        if (!data.connected) { router.replace('/onboarding'); return; }
       } catch {
         router.replace('/onboarding');
         return;
@@ -516,10 +520,14 @@ export default function Dashboard() {
 
   const handleDeleteAccount = async (name: string) => {
     const token = await getToken();
-    await fetch(`${API}/api/accounts/${encodeURIComponent(name)}`, {
+    const res = await fetch(`${API}/api/accounts/${encodeURIComponent(name)}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
-    });
+    }).catch(() => null);
+    if (!res || !res.ok) {
+      setScanError('Could not disconnect that account. Try again.');
+      return;
+    }
     setAccounts(prev => {
       const updated = prev.filter(a => a.account_name !== name);
       if (selectedAccount === name) {
