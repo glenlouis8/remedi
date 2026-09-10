@@ -1,5 +1,5 @@
 """
-MCP Client — Persistent connection to the AEGIS MCP server.
+MCP Client — Persistent connection to the Remedi MCP server.
 
 mcp_server/main.py runs as a standalone subprocess.
 This module connects to it via the MCP protocol (JSON-RPC over stdio),

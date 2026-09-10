@@ -16,7 +16,7 @@ def _emit(service: str, resource: str, status: str, msg: str = "") -> None:
     )
 
 # Initialize the MCP Server
-mcp = FastMCP("Aegis-Hands-Full-Defense")
+mcp = FastMCP("Remedi-Defense")
 
 # Ensure DB is initialized on startup (Critical for Cloud Run)
 init_db()
