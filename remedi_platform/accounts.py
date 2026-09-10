@@ -40,9 +40,12 @@ def save_aws_credentials(user_id: str, account_name: str, access_key: str, secre
     conn = get_connection()
     try:
         c = conn.cursor()
+        # Serialize per-user so two concurrent "add account" calls with different
+        # names can't both pass the COUNT(*) check below (READ COMMITTED lets
+        # both see the pre-insert snapshot). Released on commit.
+        c.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (user_id,))
         # Atomic cap enforcement: the row is inserted only if the user is under
-        # the limit OR this account_name already exists (an update). Two
-        # concurrent "add a 3rd account" calls can't both slip through.
+        # the limit OR this account_name already exists (an update).
         c.execute(
             """
             INSERT INTO aws_accounts (user_id, account_name, access_key_enc, secret_key_enc, last_used_at)

@@ -488,12 +488,9 @@ def report_generator_node(state: AgentState):
         ]
         # Structured detection instead of keyword-soup substring matching
         # ("PUBLIC" matched "no PUBLIC access", "HIGH" matched "highly", etc).
-        real_findings = [
-            m for m in FINDING_PATTERN.finditer(section)
-            if m.group(2).upper() in ("CRITICAL", "HIGH")
-        ]
-        section_upper = section.upper()
-        had_error = "ERROR:" in section_upper or '"ERROR"' in section_upper
+        # Any real FINDING line (any severity) means the control is not passing.
+        real_findings = list(FINDING_PATTERN.finditer(section))
+        had_error = "ERROR:" in section.upper()
         if real_findings:
             update_status(check_id, "VULNERABLE")
         elif not had_error:
