@@ -174,15 +174,20 @@ def check_s3_security(bucket_name: str) -> dict:
         else:
             _emit("s3", bucket_name, "ok")
         return {"bucket": bucket_name, "is_public_risk": is_public}
-    except ClientError:
-        _emit("s3", bucket_name, "vulnerable", "no public access block configured")
-        return {
-            "bucket": bucket_name,
-            "is_public_risk": True,
-            "note": "No Public Access Block found.",
-        }
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("NoSuchPublicAccessBlockConfiguration", "NoSuchBucketPolicy"):
+            _emit("s3", bucket_name, "vulnerable", "no public access block configured")
+            return {
+                "bucket": bucket_name,
+                "is_public_risk": True,
+                "note": "No Public Access Block found.",
+            }
+        # AccessDenied etc. — we could not determine the state; don't cry wolf.
+        _emit("s3", bucket_name, "unknown", f"could not check public access ({code or 'ClientError'})")
+        return {"bucket": bucket_name, "is_public_risk": False, "note": f"Check failed: {code}"}
     except Exception as e:
-        return {"bucket": bucket_name, "error": str(e)}
+        return {"bucket": bucket_name, "is_public_risk": False, "error": str(e)}
 
 
 @mcp.tool()
@@ -212,9 +217,14 @@ def audit_s3_buckets() -> str:
                 else:
                     _emit("s3", bucket_name, "ok")
                     results.append(f"BUCKET {bucket_name}: SECURE")
-            except ClientError:
-                _emit("s3", bucket_name, "vulnerable", "no public access block configured")
-                results.append(f"BUCKET {bucket_name}: PUBLIC RISK — no public access block found")
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code", "")
+                if code in ("NoSuchPublicAccessBlockConfiguration", "NoSuchBucketPolicy"):
+                    _emit("s3", bucket_name, "vulnerable", "no public access block configured")
+                    results.append(f"BUCKET {bucket_name}: PUBLIC RISK — no public access block found")
+                else:
+                    _emit("s3", bucket_name, "unknown", f"could not check ({code or 'ClientError'})")
+                    results.append(f"BUCKET {bucket_name}: UNKNOWN — could not check public access ({code})")
             except Exception as e:
                 results.append(f"BUCKET {bucket_name}: ERROR — {e}")
 
@@ -617,6 +627,7 @@ def audit_lambda_permissions() -> list:
                 role_arn = fn["Role"]
                 role_name = role_arn.split("/")[-1]
                 issues = []
+                role_check_failed = False
 
                 try:
                     for p_page in iam.get_paginator("list_attached_role_policies").paginate(RoleName=role_name):
@@ -633,8 +644,21 @@ def audit_lambda_permissions() -> list:
                                     actions = [actions]
                                 if "*" in actions and stmt.get("Effect") == "Allow":
                                     issues.append(f"Inline policy '{policy_name}' allows Action: '*'")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Don't swallow into "clean" — a throttle / AccessDenied on a
+                    # role that really is over-privileged would clear the finding.
+                    role_check_failed = True
+                    print(f"[audit_lambda] could not inspect role {role_name}: {exc}", file=sys.stderr, flush=True)
+
+                if role_check_failed:
+                    _emit("lambda", fn["FunctionName"], "unknown", "could not inspect execution role")
+                    findings.append({
+                        "FunctionName": fn["FunctionName"],
+                        "Role": role_name,
+                        "Issues": ["ROLE INSPECTION FAILED — unverified"],
+                        "OverPermissioned": None,
+                    })
+                    continue
 
                 if issues:
                     _emit("lambda", fn["FunctionName"], "vulnerable", issues[0])
@@ -650,7 +674,8 @@ def audit_lambda_permissions() -> list:
         if not findings:
             return ["No Lambda functions found."]
 
-        if not any(f["OverPermissioned"] for f in findings):
+        # Only write SAFE if every function was successfully checked AND clean.
+        if findings and all(f["OverPermissioned"] is False for f in findings):
             update_status("check_lambda", "SAFE")
         return findings
     except Exception as e:
