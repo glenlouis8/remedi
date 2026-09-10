@@ -485,19 +485,20 @@ def report_generator_node(state: AgentState):
         section_end = audit_combined.find("===", section_start + len(f"=== {svc} ==="))
         section = audit_combined[
             section_start : section_end if section_end != -1 else None
-        ].upper()
-        has_issues = any(
-            kw in section
-            for kw in [
-                "CRITICAL",
-                "HIGH",
-                "FINDING:",
-                "VULNERABLE",
-                "EXPOSED",
-                "PUBLIC",
-            ]
-        )
-        update_status(check_id, "VULNERABLE" if has_issues else "SAFE")
+        ]
+        # Structured detection instead of keyword-soup substring matching
+        # ("PUBLIC" matched "no PUBLIC access", "HIGH" matched "highly", etc).
+        real_findings = [
+            m for m in FINDING_PATTERN.finditer(section)
+            if m.group(2).upper() in ("CRITICAL", "HIGH")
+        ]
+        section_upper = section.upper()
+        had_error = "ERROR:" in section_upper or '"ERROR"' in section_upper
+        if real_findings:
+            update_status(check_id, "VULNERABLE")
+        elif not had_error:
+            update_status(check_id, "SAFE")
+        # else: this service errored — leave the row VULNERABLE (reset at scan start)
 
     print("[CIS_READY]", flush=True)
     if "SYSTEM SECURE" in clean_content:
