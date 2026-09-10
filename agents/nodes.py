@@ -100,8 +100,8 @@ def _run_sub_agent(
         HumanMessage(content="Begin your audit now."),
     ]
     finding_pattern = re.compile(
-        r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+?)\s*(?:\|\s*FIX:\s*(.+))?$",
-        re.IGNORECASE,
+        r"FINDING:\s*(.+?)\s*\|\s*SEVERITY:\s*(CRITICAL|HIGH|MEDIUM)\s*\|\s*REASON:\s*(.+?)\s*(?:\|\s*FIX:\s*(.+?))?\s*$",
+        re.IGNORECASE | re.MULTILINE,
     )
     accumulated_findings: list[str] = []
 
