@@ -26,7 +26,16 @@ def should_remediate_continue(state: AgentState):
     return "verifier"
 
 
+MAX_VERIFY_ITERATIONS = 4
+
+
 def should_verify_continue(state: AgentState):
+    # Hard stop: without this the verifier <-> verify_tools loop is bounded only
+    # by LangGraph's recursion_limit, and hitting that raises GraphRecursionError
+    # which crashes the scan *after* remediation already ran.
+    if state.get("verify_iterations", 0) >= MAX_VERIFY_ITERATIONS:
+        print(f"--- [VERIFIER] hit {MAX_VERIFY_ITERATIONS}-iteration cap — ending ---")
+        return "end"
     last_message = state["messages"][-1]
     if last_message.tool_calls:
         return "verify_tools"

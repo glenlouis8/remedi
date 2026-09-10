@@ -28,3 +28,8 @@ class AgentState(TypedDict):
     # 4. Metrics Tracking
     scan_id: str
     findings_count: int
+
+    # How many times verifier_agent has run this scan. Caps the
+    # verifier <-> verify_tools loop so a tool-happy LLM can't hit the graph
+    # recursion limit and crash the scan after remediation already ran.
+    verify_iterations: int

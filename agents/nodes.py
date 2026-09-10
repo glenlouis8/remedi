@@ -716,6 +716,7 @@ def verifier_agent(state: AgentState):
     """
     print("--- [NODE] VERIFIER AGENT ---")
     messages = state["messages"]
+    iterations = state.get("verify_iterations", 0) + 1
 
     system_msg = SystemMessage(
         content=(
@@ -765,7 +766,8 @@ def verifier_agent(state: AgentState):
                 AIMessage(
                     content="VERIFICATION SKIPPED: Remediator failed — no fixes were applied."
                 )
-            ]
+            ],
+            "verify_iterations": iterations,
         }
 
     context = messages[report_idx:]
@@ -837,4 +839,4 @@ def verifier_agent(state: AgentState):
                 update_status(check_id, "SAFE")
                 updated.add(check_id)
 
-    return {"messages": [response]}
+    return {"messages": [response], "verify_iterations": iterations}
