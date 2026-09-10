@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import sys
 import signal
 import threading
@@ -488,13 +487,17 @@ def run_agent(body: RunAgentRequest, user: dict = Depends(get_current_user)):
                     # SSE comment — keeps Render's proxy from buffering while waiting for output
                     yield ": heartbeat\n"
         except GeneratorExit:
-            # Client disconnected (tab closed / refresh). Only signal abort while
-            # the scan is still queued or at the approval gate — never once it's
-            # past approval, where the entry would just be stale litter.
-            status = r.get(f"scan:{scan_id}:status")
-            if status in ("queued", "waiting_approval"):
-                r.lpush(f"scan:{scan_id}:decision", "abort")
-                r.expire(f"scan:{scan_id}:decision", 7200)
+            # Client disconnected (tab closed / refresh). Signal abort while the
+            # scan is queued, discovering, or waiting at the gate. Post-approval
+            # the worker has already drained the decision list, so a late abort
+            # here is just a TTL'd unread key — not worth a separate status.
+            try:
+                status = r.get(f"scan:{scan_id}:status")
+                if status in ("queued", "running", "waiting_approval"):
+                    r.lpush(f"scan:{scan_id}:decision", "abort")
+                    r.expire(f"scan:{scan_id}:decision", 7200)
+            except Exception:
+                pass
 
     return StreamingResponse(
         stream(),
@@ -516,13 +519,13 @@ def approve_remediation(body: ApproveRequest, user: dict = Depends(get_current_u
     payload = "approve"
     if body.approved_resources:
         # The payload is newline-delimited into the scan subprocess's stdin and
-        # comma-split there — reject anything that could break that framing.
-        safe = []
+        # comma-split there — reject only the two chars that break that framing.
+        # (Resource labels come from the LLM report and may contain spaces, '@',
+        # '+', etc. — those are fine.)
         for res in body.approved_resources:
-            if not re.fullmatch(r"[A-Za-z0-9_.:/\-]{1,256}", res or ""):
+            if not res or len(res) > 256 or "\n" in res or "\r" in res or "," in res:
                 raise HTTPException(status_code=400, detail=f"Invalid resource identifier: {res!r}")
-            safe.append(res)
-        payload = "approve:" + ",".join(safe)
+        payload = "approve:" + ",".join(body.approved_resources)
 
     # lpush unblocks the worker's blpop immediately
     r.lpush(f"scan:{body.scan_id}:decision", payload)
