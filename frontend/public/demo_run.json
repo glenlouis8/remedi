@@ -1,0 +1,859 @@
+{
+ "version": 1,
+ "recorded_at": "2026-09-29T03:21:26+00:00",
+ "scan_id": "SCAN-DEMO0001",
+ "exit_code": 0,
+ "gate_count": 1,
+ "pre_gate": [
+  {
+   "t_ms": 905,
+   "line": "[DB] Initializing PostgreSQL database..."
+  },
+  {
+   "t_ms": 937,
+   "line": "Processing request of type ListToolsRequest"
+  },
+  {
+   "t_ms": 1000,
+   "line": "🚀 REMEDI: SECURE AGENTIC ORCHESTRATION INITIALIZED"
+  },
+  {
+   "t_ms": 1000,
+   "line": "======================================================="
+  },
+  {
+   "t_ms": 1000,
+   "line": "[SYSTEM] Initializing Audit Scan: SCAN-DEMO0001"
+  },
+  {
+   "t_ms": 1023,
+   "line": "[USER]: Start the security audit."
+  },
+  {
+   "t_ms": 1023,
+   "line": "--- [NODE] ORCHESTRATOR (parallel scan) ---"
+  },
+  {
+   "t_ms": 2436,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 2447,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 2447,
+   "line": "[SCAN] {\"service\": \"s3\", \"resource\": \"demo-public-logs\", \"status\": \"vulnerable\", \"msg\": \"no public access block configured\"}"
+  },
+  {
+   "t_ms": 2447,
+   "line": "[SCAN] {\"service\": \"s3\", \"resource\": \"demo-app-assets\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 2447,
+   "line": "[SCAN] {\"service\": \"s3\", \"resource\": \"demo-backups\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 2467,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 2467,
+   "line": "[SCAN] {\"service\": \"vpc\", \"resource\": \"vpc-0demo00000000001\", \"status\": \"vulnerable\", \"msg\": \"flow logs disabled\"}"
+  },
+  {
+   "t_ms": 2467,
+   "line": "[SCAN] {\"service\": \"vpc\", \"resource\": \"vpc-0demo00000000002\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 2471,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 2471,
+   "line": "[SCAN] {\"service\": \"rds\", \"resource\": \"demo-orders-db\", \"status\": \"vulnerable\", \"msg\": \"publicly accessible\"}"
+  },
+  {
+   "t_ms": 2472,
+   "line": "[SCAN] {\"service\": \"rds\", \"resource\": \"demo-analytics-db\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 2646,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 2646,
+   "line": "[SCAN] {\"service\": \"cloudtrail\", \"resource\": \"demo-trail\", \"status\": \"vulnerable\", \"msg\": \"logging disabled\"}"
+  },
+  {
+   "t_ms": 2763,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 2763,
+   "line": "[SCAN] {\"service\": \"sg\", \"resource\": \"sg-0demo00000000001\", \"status\": \"vulnerable\", \"msg\": \"port 22 open to the internet\"}"
+  },
+  {
+   "t_ms": 2763,
+   "line": "[SCAN] {\"service\": \"sg\", \"resource\": \"sg-0demo00000000002\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 2918,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 2918,
+   "line": "[SCAN] {\"service\": \"lambda\", \"resource\": \"demo-data-processor\", \"status\": \"vulnerable\", \"msg\": \"Attached: AdministratorAccess\"}"
+  },
+  {
+   "t_ms": 2918,
+   "line": "[SCAN] {\"service\": \"lambda\", \"resource\": \"demo-cron-cleanup\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 2969,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 2969,
+   "line": "[SCAN] {\"service\": \"ec2\", \"resource\": \"i-0demo00000000001\", \"status\": \"vulnerable\", \"msg\": \"IMDSv1 enabled, unencrypted root volume\"}"
+  },
+  {
+   "t_ms": 2969,
+   "line": "[SCAN] {\"service\": \"ec2\", \"resource\": \"i-0demo00000000002\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3583,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 3583,
+   "line": "[SCAN] {\"service\": \"iam\", \"resource\": \"dev-intern\", \"status\": \"vulnerable\", \"msg\": \"has admin-level access\"}"
+  },
+  {
+   "t_ms": 3589,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 3589,
+   "line": "[SCAN] {\"service\": \"iam\", \"resource\": \"analytics-svc\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3594,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 3594,
+   "line": "[SCAN] {\"service\": \"iam\", \"resource\": \"ci-deployer\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3819,
+   "line": "[SCAN] {\"service\": \"sg\", \"resource\": \"sg-0demo00000000001\", \"status\": \"vulnerable\", \"msg\": \"Security group allows unrestricted SSH access from any IP address, exposing the instance to brute-force attacks and unauthorized access.\", \"fix\": \"Restrict inbound SSH access to specific trusted IP addresses or CIDR blocks.\"}"
+  },
+  {
+   "t_ms": 4654,
+   "line": "[SCAN] {\"service\": \"vpc\", \"resource\": \"vpc-0demo00000000001\", \"status\": \"vulnerable\", \"msg\": \"Disabling VPC Flow Logs prevents the monitoring and logging of IP traffic, which hinders incident response and the detection of malicious network activity.\", \"fix\": \"Enable VPC Flow Logs for this VPC and configure them to be sent to CloudWatch Logs or an S3 bucket.\"}"
+  },
+  {
+   "t_ms": 4656,
+   "line": "[SCAN] {\"service\": \"s3\", \"resource\": \"demo-public-logs\", \"status\": \"vulnerable\", \"msg\": \"The bucket lacks a Public Access Block, potentially exposing sensitive log data to unauthorized public access and data exfiltration.\", \"fix\": \"Enable the S3 Block Public Access settings at the bucket level to prevent public access.\"}"
+  },
+  {
+   "t_ms": 4759,
+   "line": "[SCAN] {\"service\": \"cloudtrail\", \"resource\": \"demo-trail\", \"status\": \"vulnerable\", \"msg\": \"Logging is disabled for this trail, meaning no API activity is being recorded, which prevents incident response and forensic analysis.\", \"fix\": \"Enable logging for the trail using the AWS Console or CLI command `aws cloudtrail start-logging --name demo-trail`.\"}"
+  },
+  {
+   "t_ms": 5304,
+   "line": "[SCAN] {\"service\": \"rds\", \"resource\": \"demo-orders-db\", \"status\": \"vulnerable\", \"msg\": \"The database is publicly accessible, exposing it to potential brute-force attacks and unauthorized access from the internet.\", \"fix\": \"Modify the RDS instance to disable public accessibility and restrict access to specific VPC subnets or security groups.\"}"
+  },
+  {
+   "t_ms": 7140,
+   "line": "[SCAN] {\"service\": \"lambda\", \"resource\": \"demo-data-processor\", \"status\": \"vulnerable\", \"msg\": \"The execution role is granted AdministratorAccess, which provides full administrative control over the AWS account and poses a significant security risk if the function is compromised.\", \"fix\": \"Replace the AdministratorAccess policy with a least-privilege IAM policy that only includes the specific actions and resources required by the function.\"}"
+  },
+  {
+   "t_ms": 7140,
+   "line": "[SCAN] {\"service\": \"ec2\", \"resource\": \"i-0demo00000000001\", \"status\": \"vulnerable\", \"msg\": \"IMDSv1 is enabled, which increases the risk of metadata credential theft via SSRF attacks.\", \"fix\": \"Enforce IMDSv2 by setting the HttpTokens parameter to required.\"}"
+  },
+  {
+   "t_ms": 7795,
+   "line": "[SCAN] {\"service\": \"iam\", \"resource\": \"dev-intern\", \"status\": \"vulnerable\", \"msg\": \"This user has the AdministratorAccess policy attached, granting full control over the AWS account which poses a severe security risk if compromised.\", \"fix\": \"Remove the AdministratorAccess policy and replace it with the minimum permissions required for the intern's role.\"}"
+  },
+  {
+   "t_ms": 7797,
+   "line": "[AGENT]: === IAM ==="
+  },
+  {
+   "t_ms": 7797,
+   "line": "FINDING: dev-intern | SEVERITY: CRITICAL | REASON: This user has the AdministratorAccess policy attached, granting full control over the AWS account which poses a severe security risk if compromised. | FIX: Remove the AdministratorAccess policy and replace it with the minimum permissions required for the intern's role."
+  },
+  {
+   "t_ms": 7797,
+   "line": "=== S3 ==="
+  },
+  {
+   "t_ms": 7797,
+   "line": "FINDING: demo-public-logs | SEVERITY: CRITICAL | REASON: The bucket lacks a Public Access Block, potentially exposing sensitive log data to unauthorized public access and data exfiltration. | FIX: Enable the S3 Block Public Access settings at the bucket level to prevent public access."
+  },
+  {
+   "t_ms": 7797,
+   "line": "=== VPC ==="
+  },
+  {
+   "t_ms": 7797,
+   "line": "FINDING: vpc-0demo00000000001 | SEVERITY: HIGH | REASON: Disabling VPC Flow Logs prevents the monitoring and logging of IP traffic, which hinders incident response and the detection of malicious network activity. | FIX: Enable VPC Flow Logs for this VPC and configure them to be sent to CloudWatch Logs or an S3 bucket."
+  },
+  {
+   "t_ms": 7797,
+   "line": "=== Security Groups ==="
+  },
+  {
+   "t_ms": 7797,
+   "line": "FINDING: sg-0demo00000000001 | SEVERITY: HIGH | REASON: Security group allows unrestricted SSH access from any IP address, exposing the instance to brute-force attacks and unauthorized access. | FIX: Restrict inbound SSH access to specific trusted IP addresses or CIDR blocks."
+  },
+  {
+   "t_ms": 7797,
+   "line": "=== EC2 ==="
+  },
+  {
+   "t_ms": 7797,
+   "line": "FINDING: i-0demo00000000001 | SEVERITY: HIGH | REASON: IMDSv1 is enabled, which increases the risk of metadata credential theft via SSRF attacks. | FIX: Enforce IMDSv2 by setting the HttpTokens parameter to required."
+  },
+  {
+   "t_ms": 7797,
+   "line": "FINDING: i-0demo00000000001 | SEVERITY: HIGH | REASON: The root volume is unencrypted, which could lead to unauthorized data exposure if the physical storage is compromised. | FIX: Encrypt the root volume by creating an encrypted snapshot and using it to create a new volume."
+  },
+  {
+   "t_ms": 7797,
+   "line": "=== RDS ==="
+  },
+  {
+   "t_ms": 7797,
+   "line": "FINDING: demo-orders-db | SEVERITY: CRITICAL | REASON: The database is publicly accessible, exposing it to potential brute-force attacks and unauthorized access from the internet. | FIX: Modify the RDS instance to disable public accessibility and restrict access to specific VPC subnets or security groups."
+  },
+  {
+   "t_ms": 7797,
+   "line": "=== Lambda ==="
+  },
+  {
+   "t_ms": 7797,
+   "line": "FINDING: demo-data-processor | SEVERITY: HIGH | REASON: The execution role is granted AdministratorAccess, which provides full administrative control over the AWS account and poses a significant security risk if the function is compromised. | FIX: Replace the AdministratorAccess policy with a least-privilege IAM policy that only includes the specific actions and resources required by the function."
+  },
+  {
+   "t_ms": 7797,
+   "line": "=== CloudTrail ==="
+  },
+  {
+   "t_ms": 7797,
+   "line": "FINDING: demo-trail | SEVERITY: HIGH | REASON: Logging is disabled for this trail, meaning no API activity is being recorded, which prevents incident response and forensic analysis. | FIX: Enable logging for the trail using the AWS Console or CLI command `aws cloudtrail start-logging --name demo-trail`."
+  },
+  {
+   "t_ms": 7798,
+   "line": "--- [NODE] REPORT GENERATOR ---"
+  },
+  {
+   "t_ms": 21326,
+   "line": "[DB] Updating check_iam -> VULNERABLE (user=demo-user)"
+  },
+  {
+   "t_ms": 21334,
+   "line": "[DB] Updating check_s3 -> VULNERABLE (user=demo-user)"
+  },
+  {
+   "t_ms": 21343,
+   "line": "[DB] Updating check_vpc -> VULNERABLE (user=demo-user)"
+  },
+  {
+   "t_ms": 21352,
+   "line": "[DB] Updating check_ssh -> VULNERABLE (user=demo-user)"
+  },
+  {
+   "t_ms": 21360,
+   "line": "[DB] Updating check_ec2 -> VULNERABLE (user=demo-user)"
+  },
+  {
+   "t_ms": 21369,
+   "line": "[DB] Updating check_rds -> VULNERABLE (user=demo-user)"
+  },
+  {
+   "t_ms": 21376,
+   "line": "[DB] Updating check_lambda -> VULNERABLE (user=demo-user)"
+  },
+  {
+   "t_ms": 21384,
+   "line": "[DB] Updating check_cloudtrail -> VULNERABLE (user=demo-user)"
+  },
+  {
+   "t_ms": 21386,
+   "line": "[CIS_READY]"
+  },
+  {
+   "t_ms": 21386,
+   "line": "[DEBUG] Generated Report: 🔴 [CRITICAL] dev-intern is vulnerable -> ACTION: I will call `restrict_iam_user`."
+  },
+  {
+   "t_ms": 21386,
+   "line": "🔴 [CRITICAL] demo-public-logs is vulnerable -> ACTION: I will call `remediate_s3`."
+  },
+  {
+   "t_ms": 21386,
+   "line": "🔴 [HIGH] vpc-0demo00000000001 is vulnerable -> ACTION: I will call `remediate_vpc_flow_logs`."
+  },
+  {
+   "t_ms": 21386,
+   "line": "🔴 [HIGH] sg-0demo00000000001 is vulnerable -> ACTION: I will call `revoke_security_group_ingress`."
+  },
+  {
+   "t_ms": 21386,
+   "line": "🔴 [HIGH] i-0demo00000000001 is vulnerable -> ACTION: I will call `enforce_imdsv2`."
+  },
+  {
+   "t_ms": 21386,
+   "line": "🔴 [HIGH] i-0demo00000000001 is vulnerable -> ACTION: I will call `stop_instance`."
+  },
+  {
+   "t_ms": 21386,
+   "line": "🔴 [CRITICAL] demo-orders-db is vulnerable -> ACTION: I will call `remediate_rds_public_access`."
+  },
+  {
+   "t_ms": 21386,
+   "line": "🔴 [HIGH] demo-data-processor is vulnerable -> ACTION: I will call `remediate_lambda_role`."
+  },
+  {
+   "t_ms": 21386,
+   "line": "🔴 [HIGH] demo-trail is vulnerable -> ACTION: I will call `remediate_cloudtrail`."
+  },
+  {
+   "t_ms": 21388,
+   "line": "[AGENT]: 🔴 [CRITICAL] dev-intern is vulnerable -> ACTION: I will call `restrict_iam_user`."
+  },
+  {
+   "t_ms": 21388,
+   "line": "🔴 [CRITICAL] demo-public-logs is vulnerable -> ACTION: I will call `remediate_s3`."
+  },
+  {
+   "t_ms": 21388,
+   "line": "🔴 [HIGH] vpc-0demo00000000001 is vulnerable -> ACTION: I will call `remediate_vpc_flow_logs`."
+  },
+  {
+   "t_ms": 21388,
+   "line": "🔴 [HIGH] sg-0demo00000000001 is vulnerable -> ACTION: I will call `revoke_security_group_ingress`."
+  },
+  {
+   "t_ms": 21388,
+   "line": "🔴 [HIGH] i-0demo00000000001 is vulnerable -> ACTION: I will call `enforce_imdsv2`."
+  },
+  {
+   "t_ms": 21388,
+   "line": "🔴 [HIGH] i-0demo00000000001 is vulnerable -> ACTION: I will call `stop_instance`."
+  },
+  {
+   "t_ms": 21388,
+   "line": "🔴 [CRITICAL] demo-orders-db is vulnerable -> ACTION: I will call `remediate_rds_public_access`."
+  },
+  {
+   "t_ms": 21388,
+   "line": "🔴 [HIGH] demo-data-processor is vulnerable -> ACTION: I will call `remediate_lambda_role`."
+  },
+  {
+   "t_ms": 21388,
+   "line": "🔴 [HIGH] demo-trail is vulnerable -> ACTION: I will call `remediate_cloudtrail`."
+  },
+  {
+   "t_ms": 21396,
+   "line": ">>> AUDIT COMPLETE. FINDINGS: "
+  },
+  {
+   "t_ms": 21396,
+   "line": "🔴 [CRITICAL] dev-intern is vulnerable -> ACTION: I will call `restrict_iam_user`."
+  },
+  {
+   "t_ms": 21396,
+   "line": "🔴 [CRITICAL] demo-public-logs is vulnerable -> ACTION: I will call `remediate_s3`."
+  },
+  {
+   "t_ms": 21396,
+   "line": "🔴 [HIGH] vpc-0demo00000000001 is vulnerable -> ACTION: I will call `remediate_vpc_flow_logs`."
+  },
+  {
+   "t_ms": 21396,
+   "line": "🔴 [HIGH] sg-0demo00000000001 is vulnerable -> ACTION: I will call `revoke_security_group_ingress`."
+  },
+  {
+   "t_ms": 21396,
+   "line": "🔴 [HIGH] i-0demo00000000001 is vulnerable -> ACTION: I will call `enforce_imdsv2`."
+  },
+  {
+   "t_ms": 21396,
+   "line": "🔴 [HIGH] i-0demo00000000001 is vulnerable -> ACTION: I will call `stop_instance`."
+  },
+  {
+   "t_ms": 21396,
+   "line": "🔴 [CRITICAL] demo-orders-db is vulnerable -> ACTION: I will call `remediate_rds_public_access`."
+  },
+  {
+   "t_ms": 21396,
+   "line": "🔴 [HIGH] demo-data-processor is vulnerable -> ACTION: I will call `remediate_lambda_role`."
+  },
+  {
+   "t_ms": 21396,
+   "line": "🔴 [HIGH] demo-trail is vulnerable -> ACTION: I will call `remediate_cloudtrail`."
+  },
+  {
+   "t_ms": 21396,
+   "line": ">>> PAUSING FOR HUMAN REVIEW. (Remediation will strictly NOT proceed without approval)."
+  },
+  {
+   "t_ms": 21396,
+   "line": "[ACTION_REQUIRED] WAITING_FOR_APPROVAL"
+  }
+ ],
+ "post_gate": [
+  {
+   "t_ms": 3,
+   "line": "============================================================"
+  },
+  {
+   "t_ms": 3,
+   "line": "🛑 SAFETY GATE: HUMAN INTERVENTION REQUIRED"
+  },
+  {
+   "t_ms": 3,
+   "line": "============================================================"
+  },
+  {
+   "t_ms": 3,
+   "line": "📝 AUDIT FINDINGS:"
+  },
+  {
+   "t_ms": 3,
+   "line": "🔴 [CRITICAL] dev-intern is vulnerable -> ACTION: I will call `restrict_iam_user`."
+  },
+  {
+   "t_ms": 3,
+   "line": "🔴 [CRITICAL] demo-public-logs is vulnerable -> ACTION: I will call `remediate_s3`."
+  },
+  {
+   "t_ms": 3,
+   "line": "🔴 [HIGH] vpc-0demo00000000001 is vulnerable -> ACTION: I will call `remediate_vpc_flow_logs`."
+  },
+  {
+   "t_ms": 3,
+   "line": "🔴 [HIGH] sg-0demo00000000001 is vulnerable -> ACTION: I will call `revoke_security_group_ingress`."
+  },
+  {
+   "t_ms": 3,
+   "line": "🔴 [HIGH] i-0demo00000000001 is vulnerable -> ACTION: I will call `enforce_imdsv2`."
+  },
+  {
+   "t_ms": 3,
+   "line": "🔴 [HIGH] i-0demo00000000001 is vulnerable -> ACTION: I will call `stop_instance`."
+  },
+  {
+   "t_ms": 3,
+   "line": "🔴 [CRITICAL] demo-orders-db is vulnerable -> ACTION: I will call `remediate_rds_public_access`."
+  },
+  {
+   "t_ms": 3,
+   "line": "🔴 [HIGH] demo-data-processor is vulnerable -> ACTION: I will call `remediate_lambda_role`."
+  },
+  {
+   "t_ms": 3,
+   "line": "🔴 [HIGH] demo-trail is vulnerable -> ACTION: I will call `remediate_cloudtrail`."
+  },
+  {
+   "t_ms": 3,
+   "line": "------------------------------------------------------------"
+  },
+  {
+   "t_ms": 3,
+   "line": ">>> Do you authorize remediation? (Type 'approve' to proceed, anything else to abort): "
+  },
+  {
+   "t_ms": 3,
+   "line": "✅ Permission Granted. Resuming Workflow..."
+  },
+  {
+   "t_ms": 5,
+   "line": "[AGENT]: 🔴 [CRITICAL] dev-intern is vulnerable -> ACTION: I will call `restrict_iam_user`."
+  },
+  {
+   "t_ms": 5,
+   "line": "🔴 [CRITICAL] demo-public-logs is vulnerable -> ACTION: I will call `remediate_s3`."
+  },
+  {
+   "t_ms": 5,
+   "line": "🔴 [HIGH] vpc-0demo00000000001 is vulnerable -> ACTION: I will call `remediate_vpc_flow_logs`."
+  },
+  {
+   "t_ms": 5,
+   "line": "🔴 [HIGH] sg-0demo00000000001 is vulnerable -> ACTION: I will call `revoke_security_group_ingress`."
+  },
+  {
+   "t_ms": 5,
+   "line": "🔴 [HIGH] i-0demo00000000001 is vulnerable -> ACTION: I will call `enforce_imdsv2`."
+  },
+  {
+   "t_ms": 5,
+   "line": "🔴 [HIGH] i-0demo00000000001 is vulnerable -> ACTION: I will call `stop_instance`."
+  },
+  {
+   "t_ms": 5,
+   "line": "🔴 [CRITICAL] demo-orders-db is vulnerable -> ACTION: I will call `remediate_rds_public_access`."
+  },
+  {
+   "t_ms": 5,
+   "line": "🔴 [HIGH] demo-data-processor is vulnerable -> ACTION: I will call `remediate_lambda_role`."
+  },
+  {
+   "t_ms": 5,
+   "line": "🔴 [HIGH] demo-trail is vulnerable -> ACTION: I will call `remediate_cloudtrail`."
+  },
+  {
+   "t_ms": 5,
+   "line": "--- [NODE] REMEDIATOR AGENT ---"
+  },
+  {
+   "t_ms": 5,
+   "line": "[DEBUG] Parsed 9 tasks. Starting parallel execution..."
+  },
+  {
+   "t_ms": 5,
+   "line": "[EXEC] Calling restrict_iam_user with {'user_name': 'dev-intern'}..."
+  },
+  {
+   "t_ms": 6,
+   "line": "[EXEC] Calling remediate_s3 with {'bucket_name': 'demo-public-logs'}..."
+  },
+  {
+   "t_ms": 7,
+   "line": "[EXEC] Calling remediate_vpc_flow_logs with {'vpc_id': 'vpc-0demo00000000001'}..."
+  },
+  {
+   "t_ms": 7,
+   "line": "[EXEC] Calling revoke_security_group_ingress with {'group_id': 'sg-0demo00000000001'}..."
+  },
+  {
+   "t_ms": 7,
+   "line": "[EXEC] Calling enforce_imdsv2 with {'instance_id': 'i-0demo00000000001'}..."
+  },
+  {
+   "t_ms": 9,
+   "line": "[EXEC] Calling stop_instance with {'instance_id': 'i-0demo00000000001'}..."
+  },
+  {
+   "t_ms": 9,
+   "line": "[EXEC] Calling remediate_rds_public_access with {'db_instance_identifier': 'demo-orders-db'}..."
+  },
+  {
+   "t_ms": 10,
+   "line": "[EXEC] Calling remediate_lambda_role with {'function_name': 'demo-data-processor'}..."
+  },
+  {
+   "t_ms": 10,
+   "line": "[EXEC] Calling remediate_cloudtrail with {'trail_name': 'demo-trail'}..."
+  },
+  {
+   "t_ms": 14,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 22,
+   "line": "[DB] Updating check_iam -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 31,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 36,
+   "line": "[DB] Updating check_s3 -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 42,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 47,
+   "line": "[DB] Updating check_vpc -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 53,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 59,
+   "line": "[DB] Updating check_ssh -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 64,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 68,
+   "line": "[DB] Updating check_ec2 -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 73,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 78,
+   "line": "[DB] Updating check_ec2 -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 83,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 87,
+   "line": "[DB] Updating check_rds -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 92,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 96,
+   "line": "[DB] Updating check_lambda -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 100,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 104,
+   "line": "[DB] Updating check_cloudtrail -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 121,
+   "line": "[REMEDIATOR]: ### 🛠️ REMEDIATION REPORT"
+  },
+  {
+   "t_ms": 121,
+   "line": "✅ SUCCESS: dev-intern neutralized."
+  },
+  {
+   "t_ms": 121,
+   "line": "ACTIONS: Detached: AdministratorAccess; Attached ReadOnlyAccess"
+  },
+  {
+   "t_ms": 121,
+   "line": "✅ SUCCESS: Public access blocked for bucket 'demo-public-logs'. Deleted the fully-public bucket policy."
+  },
+  {
+   "t_ms": 121,
+   "line": "✅ SUCCESS: Flow Logs enabled for vpc-0demo00000000001. Note: an IAM role named 'AegisFlowLogRole' was created in your account to allow VPC Flow Logs to deliver to CloudWatch. This role is required for flow logs to keep working and will persist in your account — do not delete it."
+  },
+  {
+   "t_ms": 121,
+   "line": "✅ SUCCESS: Revoked all internet-open ingress rules on sg-0demo00000000001 (ports: 22)."
+  },
+  {
+   "t_ms": 121,
+   "line": "✅ SUCCESS: IMDSv2 enforced on i-0demo00000000001."
+  },
+  {
+   "t_ms": 121,
+   "line": "✅ SUCCESS: Instance i-0demo00000000001 stopped (Quarantined)."
+  },
+  {
+   "t_ms": 121,
+   "line": "✅ SUCCESS: Public access disabled for RDS instance 'demo-orders-db'."
+  },
+  {
+   "t_ms": 121,
+   "line": "✅ SUCCESS: Lambda role 'demo-processor-role' remediated. Actions: Detached AdministratorAccess; Attached AWSLambdaBasicExecutionRole"
+  },
+  {
+   "t_ms": 121,
+   "line": "✅ SUCCESS: CloudTrail logging started for trail 'demo-trail'."
+  },
+  {
+   "t_ms": 121,
+   "line": "--- [NODE] VERIFIER AGENT ---"
+  },
+  {
+   "t_ms": 3132,
+   "line": "[REMEDIATOR]: 🛠️  EXECUTING CHECK: list_attached_user_policies..."
+  },
+  {
+   "t_ms": 3132,
+   "line": "[REMEDIATOR]: 🛠️  EXECUTING CHECK: check_s3_security..."
+  },
+  {
+   "t_ms": 3132,
+   "line": "[REMEDIATOR]: 🛠️  EXECUTING CHECK: audit_vpc_network..."
+  },
+  {
+   "t_ms": 3132,
+   "line": "[REMEDIATOR]: 🛠️  EXECUTING CHECK: audit_security_groups..."
+  },
+  {
+   "t_ms": 3132,
+   "line": "[REMEDIATOR]: 🛠️  EXECUTING CHECK: audit_ec2_vulnerabilities..."
+  },
+  {
+   "t_ms": 3132,
+   "line": "[REMEDIATOR]: 🛠️  EXECUTING CHECK: audit_rds_instances..."
+  },
+  {
+   "t_ms": 3132,
+   "line": "[REMEDIATOR]: 🛠️  EXECUTING CHECK: audit_lambda_permissions..."
+  },
+  {
+   "t_ms": 3132,
+   "line": "[REMEDIATOR]: 🛠️  EXECUTING CHECK: audit_cloudtrail_logging..."
+  },
+  {
+   "t_ms": 3141,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 3141,
+   "line": "[SCAN] {\"service\": \"iam\", \"resource\": \"dev-intern\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3146,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 3146,
+   "line": "[SCAN] {\"service\": \"s3\", \"resource\": \"demo-public-logs\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3149,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 3149,
+   "line": "[SCAN] {\"service\": \"vpc\", \"resource\": \"vpc-0demo00000000001\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3149,
+   "line": "[SCAN] {\"service\": \"vpc\", \"resource\": \"vpc-0demo00000000002\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3151,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 3151,
+   "line": "[SCAN] {\"service\": \"sg\", \"resource\": \"sg-0demo00000000001\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3151,
+   "line": "[SCAN] {\"service\": \"sg\", \"resource\": \"sg-0demo00000000002\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3160,
+   "line": "[DB] Updating check_ssh -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 3165,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 3165,
+   "line": "[SCAN] {\"service\": \"ec2\", \"resource\": \"i-0demo00000000001\", \"status\": \"ok\", \"msg\": \"not running (quarantined)\"}"
+  },
+  {
+   "t_ms": 3165,
+   "line": "[SCAN] {\"service\": \"ec2\", \"resource\": \"i-0demo00000000002\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3167,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 3167,
+   "line": "[SCAN] {\"service\": \"rds\", \"resource\": \"demo-orders-db\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3167,
+   "line": "[SCAN] {\"service\": \"rds\", \"resource\": \"demo-analytics-db\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3174,
+   "line": "[DB] Updating check_rds -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 3178,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 3178,
+   "line": "[SCAN] {\"service\": \"lambda\", \"resource\": \"demo-data-processor\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3178,
+   "line": "[SCAN] {\"service\": \"lambda\", \"resource\": \"demo-cron-cleanup\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3184,
+   "line": "[DB] Updating check_lambda -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 3187,
+   "line": "Processing request of type CallToolRequest"
+  },
+  {
+   "t_ms": 3187,
+   "line": "[SCAN] {\"service\": \"cloudtrail\", \"resource\": \"demo-trail\", \"status\": \"ok\", \"msg\": \"\"}"
+  },
+  {
+   "t_ms": 3193,
+   "line": "[DB] Updating check_cloudtrail -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 3197,
+   "line": "--- [NODE] VERIFIER AGENT ---"
+  },
+  {
+   "t_ms": 8334,
+   "line": "[DB] Updating check_iam -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 8342,
+   "line": "[DB] Updating check_s3 -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 8349,
+   "line": "[DB] Updating check_vpc -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 8358,
+   "line": "[DB] Updating check_ssh -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 8366,
+   "line": "[DB] Updating check_ec2 -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 8373,
+   "line": "[DB] Updating check_rds -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 8380,
+   "line": "[DB] Updating check_lambda -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 8387,
+   "line": "[DB] Updating check_cloudtrail -> SAFE (user=demo-user)"
+  },
+  {
+   "t_ms": 8391,
+   "line": "[VERIFIER]: 🏆 MISSION ACCOMPLISHED. All resources verified as SECURE."
+  },
+  {
+   "t_ms": 8392,
+   "line": "======================================================="
+  },
+  {
+   "t_ms": 8392,
+   "line": "🏁 REMEDI WORKFLOW COMPLETE"
+  },
+  {
+   "t_ms": 8392,
+   "line": "======================================================="
+  }
+ ]
+}
