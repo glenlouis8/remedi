@@ -3,6 +3,14 @@ import uuid
 import os
 from dotenv import load_dotenv
 load_dotenv()
+
+if os.environ.get("REMEDI_DEMO") == "1":
+    # Every layer (specialist prompts, remediator gate, MCP guard) must agree on who
+    # is protected, so the demo's admin user is excluded from the plan up front.
+    from mcp_server.demo_fixtures import DEMO_PROTECTED_USERS
+    _protected = {u.strip() for u in os.environ.get("PROTECTED_IAM_USERS", "").split(",") if u.strip()}
+    os.environ["PROTECTED_IAM_USERS"] = ",".join(sorted(_protected | DEMO_PROTECTED_USERS))
+
 from agents.graph import app
 import datetime
 from mcp_server.database import update_scan

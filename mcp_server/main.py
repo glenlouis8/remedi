@@ -7,6 +7,10 @@ import datetime
 from mcp.server.fastmcp import FastMCP
 from botocore.exceptions import ClientError
 from mcp_server.database import update_status, init_db
+from mcp_server import demo_fixtures
+
+# Demo mode: every tool answers from an in-memory fake account, no boto3 calls.
+DEMO_MODE = os.environ.get("REMEDI_DEMO") == "1"
 
 def _emit(service: str, resource: str, status: str, msg: str = "") -> None:
     """Prints a structured scan status line to stderr so the frontend can parse it."""
@@ -32,6 +36,8 @@ def get_boto_client(service_name):
 def _protected_iam_users() -> set:
     """Usernames that must never be remediated: the PROTECTED_IAM_USERS env list
     plus the identity these credentials belong to (self-lockout guard)."""
+    if DEMO_MODE:
+        return demo_fixtures.protected_iam_users(os.environ.get("PROTECTED_IAM_USERS", ""))
     protected = {
         u.strip() for u in os.environ.get("PROTECTED_IAM_USERS", "").split(",") if u.strip()
     }
@@ -51,6 +57,8 @@ def _protected_iam_users() -> set:
 @mcp.tool()
 def get_agent_identity() -> str:
     """Verifies the Agent's credentials and target region before acting."""
+    if DEMO_MODE:
+        return demo_fixtures.get_agent_identity()
     sts = get_boto_client("sts")
     try:
         id_info = sts.get_caller_identity()
@@ -67,6 +75,8 @@ def get_agent_identity() -> str:
 @mcp.tool()
 def list_iam_users() -> str:
     """Lists all IAM users."""
+    if DEMO_MODE:
+        return demo_fixtures.list_iam_users()
     iam = get_boto_client("iam")
     try:
         paginator = iam.get_paginator("list_users")
@@ -79,6 +89,8 @@ def list_iam_users() -> str:
 @mcp.tool()
 def list_attached_user_policies(username: str) -> str:
     """Lists managed and inline policies."""
+    if DEMO_MODE:
+        return demo_fixtures.list_attached_user_policies(username)
     iam = get_boto_client("iam")
     try:
         policies = []
@@ -108,6 +120,8 @@ def restrict_iam_user(user_name: str) -> str:
     """
     REMEDIATION: Nukes permissions and applies ReadOnlyAccess.
     """
+    if DEMO_MODE:
+        return demo_fixtures.restrict_iam_user(user_name, _protected_iam_users())
     iam = get_boto_client("iam")
     log = []
     read_only_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
@@ -165,6 +179,8 @@ def restrict_iam_user(user_name: str) -> str:
 @mcp.tool()
 def list_s3_buckets() -> str:
     """Lists all bucket names."""
+    if DEMO_MODE:
+        return demo_fixtures.list_s3_buckets()
     s3 = get_boto_client("s3")
     try:
         response = s3.list_buckets()
@@ -177,6 +193,8 @@ def list_s3_buckets() -> str:
 @mcp.tool()
 def check_s3_security(bucket_name: str) -> dict:
     """Checks for public access blocks."""
+    if DEMO_MODE:
+        return demo_fixtures.check_s3_security(bucket_name)
     s3 = get_boto_client("s3")
     try:
         res = s3.get_public_access_block(Bucket=bucket_name)
@@ -213,6 +231,8 @@ def check_s3_security(bucket_name: str) -> dict:
 @mcp.tool()
 def audit_s3_buckets() -> str:
     """Lists all S3 buckets and checks each one for public access in a single call."""
+    if DEMO_MODE:
+        return demo_fixtures.audit_s3_buckets()
     s3 = get_boto_client("s3")
     try:
         response = s3.list_buckets()
@@ -258,6 +278,8 @@ def remediate_s3(bucket_name: str) -> str:
     """
     REMEDIATION: Blocks ALL public access.
     """
+    if DEMO_MODE:
+        return demo_fixtures.remediate_s3(bucket_name)
     s3 = get_boto_client("s3")
     try:
         s3.put_public_access_block(
@@ -321,6 +343,8 @@ def audit_vpc_network() -> list:
     """
     DISCOVERY: Checks for VPC Flow Logs.
     """
+    if DEMO_MODE:
+        return demo_fixtures.audit_vpc_network()
     ec2 = get_boto_client("ec2")
     network_findings = []
     try:
@@ -351,6 +375,8 @@ def remediate_vpc_flow_logs(vpc_id: str) -> str:
     """
     REMEDIATION: Creates CloudWatch Log Group, IAM Role, and enables Flow Logs.
     """
+    if DEMO_MODE:
+        return demo_fixtures.remediate_vpc_flow_logs(vpc_id)
     ec2 = get_boto_client("ec2")
     logs = get_boto_client("logs")
     iam = get_boto_client("iam")
@@ -439,6 +465,8 @@ def audit_security_groups() -> list:
     """
     DISCOVERY: Scans for 0.0.0.0/0 ingress.
     """
+    if DEMO_MODE:
+        return demo_fixtures.audit_security_groups()
     ec2 = get_boto_client("ec2")
     risky_groups = []
     try:
@@ -481,6 +509,8 @@ def revoke_security_group_ingress(group_id: str) -> str:
     REMEDIATION: Revokes ALL inbound rules open to 0.0.0.0/0 on the given
     security group. One call fixes every exposed port at once.
     """
+    if DEMO_MODE:
+        return demo_fixtures.revoke_security_group_ingress(group_id)
     ec2 = get_boto_client("ec2")
     try:
         sg = ec2.describe_security_groups(GroupIds=[group_id])["SecurityGroups"][0]
@@ -532,6 +562,8 @@ def audit_ec2_vulnerabilities() -> list:
     """
     DISCOVERY: Scans running instances for IMDSv1 and Unencrypted Root Volumes.
     """
+    if DEMO_MODE:
+        return demo_fixtures.audit_ec2_vulnerabilities()
     ec2 = get_boto_client("ec2")
     findings = []
     try:
@@ -584,6 +616,8 @@ def enforce_imdsv2(instance_id: str) -> str:
     """
     REMEDIATION: Enforces IMDSv2.
     """
+    if DEMO_MODE:
+        return demo_fixtures.enforce_imdsv2(instance_id)
     ec2 = get_boto_client("ec2")
     # Metadata options can be set on a running OR stopped instance, but the API
     # rejects calls during the transient 'stopping'/'pending' states with
@@ -616,6 +650,8 @@ def stop_instance(instance_id: str) -> str:
     """
     REMEDIATION: Stops an instance (Quarantine).
     """
+    if DEMO_MODE:
+        return demo_fixtures.stop_instance(instance_id)
     ec2 = get_boto_client("ec2")
     try:
         ec2.stop_instances(InstanceIds=[instance_id])
@@ -636,6 +672,8 @@ def audit_rds_instances() -> list:
     DISCOVERY: Scans all RDS instances for public accessibility.
     A publicly accessible RDS instance is reachable from the internet.
     """
+    if DEMO_MODE:
+        return demo_fixtures.audit_rds_instances()
     rds = get_boto_client("rds")
     findings = []
     try:
@@ -668,6 +706,8 @@ def remediate_rds_public_access(db_instance_identifier: str) -> str:
     REMEDIATION: Disables public accessibility on an RDS instance.
     The database will no longer be reachable from the internet.
     """
+    if DEMO_MODE:
+        return demo_fixtures.remediate_rds_public_access(db_instance_identifier)
     rds = get_boto_client("rds")
     try:
         rds.modify_db_instance(
@@ -692,6 +732,8 @@ def audit_lambda_permissions() -> list:
     DISCOVERY: Scans Lambda functions for over-permissioned execution roles
     (roles with AdministratorAccess or wildcard action policies).
     """
+    if DEMO_MODE:
+        return demo_fixtures.audit_lambda_permissions()
     lambda_client = get_boto_client("lambda")
     iam = get_boto_client("iam")
     findings = []
@@ -763,6 +805,8 @@ def remediate_lambda_role(function_name: str) -> str:
     REMEDIATION: Detaches over-permissive policies from a Lambda function's
     execution role and replaces them with AWSLambdaBasicExecutionRole.
     """
+    if DEMO_MODE:
+        return demo_fixtures.remediate_lambda_role(function_name)
     lambda_client = get_boto_client("lambda")
     iam = get_boto_client("iam")
     log = []
@@ -810,6 +854,8 @@ def audit_cloudtrail_logging() -> list:
     DISCOVERY: Checks whether CloudTrail is enabled and actively logging.
     CloudTrail disabled means no audit log of who did what in AWS.
     """
+    if DEMO_MODE:
+        return demo_fixtures.audit_cloudtrail_logging()
     ct = get_boto_client("cloudtrail")
     findings = []
     try:
@@ -854,6 +900,8 @@ def remediate_cloudtrail(trail_name: str = "remedi-audit-trail") -> str:
     - If no trails exist: creates an S3 bucket, creates a multi-region trail, starts logging.
     - If a trail exists but logging is off: starts logging on it.
     """
+    if DEMO_MODE:
+        return demo_fixtures.remediate_cloudtrail(trail_name)
     ct = get_boto_client("cloudtrail")
     s3 = get_boto_client("s3")
     sts = get_boto_client("sts")
@@ -941,6 +989,8 @@ def get_resource_owner(resource_name: str) -> str:
     """
     FORENSICS: Queries CloudTrail for creation events.
     """
+    if DEMO_MODE:
+        return demo_fixtures.get_resource_owner(resource_name)
     client = get_boto_client("cloudtrail")
     try:
         response = client.lookup_events(
