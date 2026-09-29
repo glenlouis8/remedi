@@ -692,6 +692,7 @@ def remediator_agent(state: AgentState):
                 )
 
         results = []
+        outcomes = []
         success_count = 0
 
         with ThreadPoolExecutor(max_workers=min(max(len(tasks), 1), 10)) as executor:
@@ -699,6 +700,7 @@ def remediator_agent(state: AgentState):
             for future in as_completed(futures):
                 resource, real_name, args, message, status, duration = future.result()
                 results.append(message)
+                outcomes.append({"resource": resource, "tool": real_name, "status": status})
                 if status == "SUCCESS":
                     success_count += 1
                 resource_id = (
@@ -716,7 +718,9 @@ def remediator_agent(state: AgentState):
         # 7. REPORTING
         update_scan(scan_id, remediations_count=success_count)
         full_summary = "### 🛠️ REMEDIATION REPORT\n" + "\n".join(results)
-        return {"messages": [AIMessage(content=full_summary)]}
+        # outcomes ride along so the verifier can tell which fixes really landed
+        # instead of trusting the LLM's verdict over the whole report.
+        return {"messages": [AIMessage(content=full_summary, additional_kwargs={"remediation_outcomes": outcomes})]}
 
     except Exception as e:
         print(f"[ERROR] Remediation failure: {e}")
@@ -805,7 +809,20 @@ def verifier_agent(state: AgentState):
         )
         response = audit_llm.invoke([system_msg] + context + [forced])
 
-    verified = "MISSION ACCOMPLISHED" in str(response.content)
+    verdict_ok = "MISSION ACCOMPLISHED" in str(response.content)
+
+    # A REFUSED/SKIPPED/ERROR remediation was never applied, so "everything
+    # verified SECURE" can't be true no matter what the LLM concluded from
+    # re-auditing only the resources it chose to look at.
+    outcomes = messages[report_idx].additional_kwargs.get("remediation_outcomes", [])
+    unfixed = [o for o in outcomes if o["status"] != "SUCCESS"]
+    if verdict_ok and unfixed:
+        listing = "; ".join(f"{o['resource']} ({o['tool']}: {o['status']})" for o in unfixed)
+        response = AIMessage(
+            content=f"VERIFICATION FAILURE: {len(unfixed)} remediation(s) did not complete — {listing}."
+        )
+
+    verified = verdict_ok and not unfixed
     status = "COMPLETED" if verified else "FAILED"
     end_time = datetime.datetime.now().isoformat()
 
@@ -816,8 +833,9 @@ def verifier_agent(state: AgentState):
         verified=verified,
     )
 
-    # Update compliance checks — mark remediated services as SAFE now that fixes are verified
-    if verified:
+    # Update compliance checks — mark remediated services as SAFE now that fixes are verified.
+    # Controls with an unfixed resource are skipped and stay as they were.
+    if verdict_ok:
         _TOOL_TO_CIS = {
             "restrict_iam_user": "check_iam",
             "remediate_s3": "check_s3",
@@ -849,10 +867,11 @@ def verifier_agent(state: AgentState):
         # VULNERABLE despite a verified fix). Group 2 is the tool name.
         summary = state.get("audit_summary", "")
         updated = set()
+        unfixed_checks = {_TOOL_TO_CIS.get(o["tool"]) for o in unfixed}
         for m in REMEDIATION_LINE_PATTERN.finditer(summary):
             tool_name = _INTENT_TO_TOOL.get(m.group(2), m.group(2))
             check_id = _TOOL_TO_CIS.get(tool_name)
-            if check_id and check_id not in updated:
+            if check_id and check_id not in updated and check_id not in unfixed_checks:
                 update_status(check_id, "SAFE")
                 updated.add(check_id)
 

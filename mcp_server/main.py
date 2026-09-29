@@ -444,12 +444,14 @@ def audit_security_groups() -> list:
     try:
         sgs = ec2.describe_security_groups()["SecurityGroups"]
         for sg in sgs:
+            sg_risky = False
             for perm in sg["IpPermissions"]:
                 world_open = (
                     any(r.get("CidrIp") == "0.0.0.0/0" for r in perm.get("IpRanges", []))
                     or any(r.get("CidrIpv6") == "::/0" for r in perm.get("Ipv6Ranges", []))
                 )
                 if world_open:
+                    sg_risky = True
                     port = perm.get("FromPort", "all")
                     _emit("sg", sg["GroupId"], "vulnerable", f"port {port} open to the internet")
                     risky_groups.append(
@@ -460,6 +462,9 @@ def audit_security_groups() -> list:
                             "Risk": "OPEN TO WORLD (0.0.0.0/0)",
                         }
                     )
+            if not sg_risky:
+                # Clean groups must emit too, or a fixed group never flips back to ok in the UI.
+                _emit("sg", sg["GroupId"], "ok")
 
         if not risky_groups:
             update_status("check_ssh", "SAFE")
@@ -531,10 +536,15 @@ def audit_ec2_vulnerabilities() -> list:
     findings = []
     try:
         reservations = ec2.describe_instances(
-            Filters=[{"Name": "instance-state-name", "Values": ["running"]}]
+            Filters=[{"Name": "instance-state-name", "Values": ["running", "stopping", "stopped"]}]
         )["Reservations"]
         for res in reservations:
             for inst in res["Instances"]:
+                if inst["State"]["Name"] != "running":
+                    # Quarantined (stopped) instances aren't findings, but they must
+                    # emit ok or a fixed instance stays red in the UI.
+                    _emit("ec2", inst["InstanceId"], "ok", "not running (quarantined)")
+                    continue
                 imds_status = inst.get("MetadataOptions", {}).get(
                     "HttpTokens", "optional"
                 )
