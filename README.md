@@ -2,7 +2,7 @@
 
 **AI-powered AWS security scanner and auto-remediator.**
 
-**Live:** https://remedi-kohl-seven.vercel.app/
+**Live:** https://remedi-kohl-seven.vercel.app/  ·  **Demo (no signup):** https://remedi-kohl-seven.vercel.app/demo
 
 Remedi scans your AWS account across 8 services, generates a structured findings report, pauses for human approval, then automatically fixes every vulnerability it found. A verification pass confirms the fixes held.
 
@@ -96,7 +96,28 @@ orchestrator → report_generator → safety_gate ─[your approval]─► remed
 
 ---
 
-## Getting started
+## Try it
+
+### Watch the demo, no signup
+
+**[/demo](https://remedi-kohl-seven.vercel.app/demo)** is a **recorded replay** of a real run against a simulated AWS account. The agents produced the recording; the site replays it in your browser and pauses at the approval gate until you click. There is no backend behind it, no credentials, and no LLM cost per click. It is a replay, not a live scan.
+
+### Run the real pipeline against the simulated account
+
+Demo mode swaps only the AWS I/O for an in-memory fake account (`mcp_server/demo_fixtures.py`, deliberately vulnerable: 9 findings across 8 services). The specialist agents, prompts, approval gate, remediator and verifier are the real ones, and the Gemini calls are real (about $0.02 per run). No AWS calls are made.
+
+```bash
+uv sync
+createdb remedi_demo                       # any local Postgres; a scan writes rows
+export GOOGLE_API_KEY=...
+DATABASE_URL=postgresql://localhost/remedi_demo REMEDI_DEMO=1 python main.py
+```
+
+Type `approve` at the pause. The fake account is stateful, so the verifier re-audits and sees the fixes.
+
+To re-record the hosted replay from a fresh run (about $0.02), run `DATABASE_URL=postgresql://localhost/remedi_demo python scripts/record_demo.py`. It refuses non-local databases and won't save a failed run. `tests/test_demo_recording.py` checks the recording is safe to publish and still matches the fake account.
+
+### Scan your own AWS account
 
 **[remedi-kohl-seven.vercel.app](https://remedi-kohl-seven.vercel.app/)** — sign in, connect your AWS account, and run a scan.
 
@@ -156,7 +177,7 @@ AWS credentials are never stored in plaintext:
 
 ## Testing
 
-28 tests covering the critical paths — no external services required.
+58 tests covering the critical paths — no external services required.
 
 ```bash
 # Install test dependencies
@@ -209,7 +230,11 @@ uv add pytest "moto[s3,iam,ec2,rds,cloudtrail,logs]" httpx --dev
 | `test_manual_review_line_not_parsed` | Lines marked for manual review are not mistakenly queued as automated tasks |
 | `test_high_severity_also_parses` | A `🔴 [HIGH]` line (not just `[CRITICAL]`) also parses into a remediation task |
 
-**Result: 27 passed, 1 xfailed (expected — moto limitation)**
+**`tests/test_scan_status.py`** — the UI's scan events and the verifier's verdict must match what happened: clean security groups and stopped instances emit `ok`, and a refused or failed fix can't be reported as "all secure".
+
+**`tests/test_demo_recording.py`** — the recorded demo is well-formed, leaks no local details, and matches the simulated account.
+
+**Result: 58 passed, 1 xfailed (expected — moto limitation)**
 
 ---
 
