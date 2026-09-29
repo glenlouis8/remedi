@@ -37,16 +37,16 @@ const SERVICE_META: Record<ServiceKey, { label: string; Icon: React.ComponentTyp
 };
 const SERVICE_ORDER: ServiceKey[] = ['iam', 's3', 'vpc', 'sg', 'ec2', 'rds', 'lambda', 'cloudtrail'];
 
-const REMEDIATION_INFO: Record<string, { title: string; icon: string; risk: string }> = {
-  restrict_iam_user:             { icon: '🔑', title: 'Revoke Admin Privileges',   risk: 'User has full AWS access'                  },
-  remediate_s3:                  { icon: '🪣', title: 'Block Public S3 Access',    risk: 'Bucket readable by anyone on the internet' },
-  remediate_vpc_flow_logs:       { icon: '🌐', title: 'Enable Network Logging',    risk: 'VPC has no flow logs'                      },
-  revoke_security_group_ingress: { icon: '🔒', title: 'Close Open Ports',          risk: 'Ports open to 0.0.0.0/0'                  },
-  enforce_imdsv2:                { icon: '💻', title: 'Enforce IMDSv2',            risk: 'EC2 vulnerable to SSRF via IMDSv1'         },
-  stop_instance:                 { icon: '⛔', title: 'Quarantine EC2 Instance',   risk: 'Compromised instance posing active threat' },
-  remediate_rds_public_access:   { icon: '🗄️', title: 'Make RDS Private',         risk: 'Database reachable from the internet'      },
-  remediate_lambda_role:         { icon: '⚡', title: 'Fix Lambda Permissions',    risk: 'Lambda has admin-level AWS access'         },
-  remediate_cloudtrail:          { icon: '📋', title: 'Enable CloudTrail Logging', risk: 'No audit log of API activity'              },
+const REMEDIATION_INFO: Record<string, { title: string; icon: string; risk: string; does: string }> = {
+  restrict_iam_user:             { icon: '🔑', title: 'Revoke Admin Privileges',   risk: 'User has full AWS access',                  does: 'Detaches the admin policy and leaves the user read-only.' },
+  remediate_s3:                  { icon: '🪣', title: 'Block Public S3 Access',    risk: 'Bucket readable by anyone on the internet', does: 'Turns on all four public-access blocks and removes any public bucket policy.' },
+  remediate_vpc_flow_logs:       { icon: '🌐', title: 'Enable Network Logging',    risk: 'VPC has no flow logs',                      does: 'Creates a log group and role, then switches flow logs on.' },
+  revoke_security_group_ingress: { icon: '🔒', title: 'Close Open Ports',          risk: 'Ports open to 0.0.0.0/0',                  does: 'Removes every inbound rule that is open to the whole internet.' },
+  enforce_imdsv2:                { icon: '💻', title: 'Enforce IMDSv2',            risk: 'EC2 vulnerable to SSRF via IMDSv1',         does: 'Requires session tokens for instance metadata, which stops SSRF credential theft.' },
+  stop_instance:                 { icon: '⛔', title: 'Quarantine EC2 Instance',   risk: 'Compromised instance posing active threat', does: 'Stops the instance. Re-encrypting its disk is a manual job, so it is quarantined instead.' },
+  remediate_rds_public_access:   { icon: '🗄️', title: 'Make RDS Private',         risk: 'Database reachable from the internet',      does: 'Turns off public accessibility so the database is only reachable from inside the VPC.' },
+  remediate_lambda_role:         { icon: '⚡', title: 'Fix Lambda Permissions',    risk: 'Lambda has admin-level AWS access',         does: 'Detaches the admin policy and attaches the basic execution role instead.' },
+  remediate_cloudtrail:          { icon: '📋', title: 'Enable CloudTrail Logging', risk: 'No audit log of API activity',              does: 'Starts logging on the trail so API activity is recorded again.' },
 };
 
 const parseRemediationItem = (line: string): PlanItem | null => {
@@ -60,6 +60,26 @@ const parseRemediationItem = (line: string): PlanItem | null => {
 };
 
 const RAW_LOG_LIMIT = 80;
+
+// What is wrong with the simulated account (mcp_server/demo_fixtures.py), one problem per service.
+const PLANTED_PROBLEMS: { icon: string; text: string }[] = [
+  { icon: '🔑', text: 'An intern account (dev-intern) has full AdministratorAccess' },
+  { icon: '🪣', text: 'A log bucket has no public-access block and a public policy' },
+  { icon: '🌐', text: 'A network has flow logging switched off' },
+  { icon: '🔒', text: 'A security group leaves SSH open to the whole internet' },
+  { icon: '💻', text: 'A server still allows IMDSv1 and has an unencrypted disk' },
+  { icon: '🗄️', text: 'A database is reachable from the public internet' },
+  { icon: '⚡', text: 'A Lambda function runs with admin rights' },
+  { icon: '📋', text: 'CloudTrail is switched off, so nothing is being logged' },
+];
+
+const PIPELINE: { name: string; what: string }[] = [
+  { name: 'Scan',    what: 'Eight specialist AI agents, one per AWS service, audit the account in parallel. Their tools are read-only.' },
+  { name: 'Report',  what: 'The findings are merged into one plan, and every problem is matched to the exact fix for it.' },
+  { name: 'Approve', what: 'The pipeline stops. Nothing is changed until a human says yes. This gate is enforced in code.' },
+  { name: 'Fix',     what: 'Approved fixes run in parallel, and every action is logged with its outcome.' },
+  { name: 'Verify',  what: 'A second pass re-audits only the fixed resources. It does not trust the fix report.' },
+];
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
@@ -193,6 +213,10 @@ export default function DemoPage() {
   const totalItems = SERVICE_ORDER.reduce((n, s) => n + (scanItems[s]?.length ?? 0), 0);
   const doneServices = Object.keys(scanItems).length;
   const busy = scanState === 'scanning' || scanState === 'remediating';
+  const allFixed = steps.length > 0 && fixedCount === steps.length;
+  // 1 Scan, 2 Report (passed by the time the gate shows), 3 Approve, 4 Fix, 5 Verify
+  const reporting = scanState === 'scanning' && doneServices === SERVICE_ORDER.length;
+  const phase = scanState === 'scanning' ? (reporting ? 2 : 1) : scanState === 'awaiting_approval' ? 3 : allFixed ? 5 : 4;
 
   return (
     <div className="min-h-screen bg-[#09090b] text-slate-200" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
@@ -252,28 +276,93 @@ export default function DemoPage() {
 
         {/* ── IDLE ── */}
         {scanState === 'idle' && (
-          <div className="rounded-2xl border border-white/8 bg-[#111116] p-8 sm:p-10 text-center">
-            <div className="mx-auto mb-5 w-12 h-12 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-              <ShieldCheck size={22} className="text-violet-400" />
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-white/8 bg-[#111116] p-6 sm:p-9">
+              <div className="mb-5 w-11 h-11 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
+                <ShieldCheck size={20} className="text-violet-400" />
+              </div>
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-100">Watch Remedi secure an AWS account</h1>
+              <p className="mt-3 text-sm text-slate-400 leading-relaxed">
+                Most security scanners hand you a long list of problems and stop there. Remedi finds the problems, asks you
+                before it touches anything, fixes them, and then proves the fixes actually held.
+              </p>
+              <button onClick={startDemo}
+                className="mt-6 inline-flex items-center gap-2 bg-violet-500 hover:bg-violet-400 text-white font-semibold px-6 py-3 rounded-lg transition-colors text-sm">
+                <Play size={13} className="fill-current" /> Run demo scan
+              </button>
+              <p className="mt-3 text-xs text-slate-600">About 30 seconds. No signup, no AWS keys.</p>
             </div>
-            <h1 className="text-xl sm:text-2xl font-bold text-slate-100">Watch Remedi secure an AWS account</h1>
-            <p className="mt-3 text-sm text-slate-400 max-w-xl mx-auto leading-relaxed">
-              Eight specialist agents audit IAM, S3, VPC, security groups, EC2, RDS, Lambda and CloudTrail in parallel.
-              You review the findings and approve. Remedi fixes them, then re-audits to confirm the fixes held.
-            </p>
-            <ol className="mt-6 flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs text-slate-500">
-              {['Scan', 'Review', 'Approve', 'Fix', 'Verify'].map((s, i) => (
-                <li key={s} className="flex items-center gap-2">
-                  <span className="w-5 h-5 rounded-full border border-white/10 text-slate-400 flex items-center justify-center text-[10px]">{i + 1}</span>{s}
-                </li>
-              ))}
-            </ol>
-            <button onClick={startDemo}
-              className="mt-8 inline-flex items-center gap-2 bg-violet-500 hover:bg-violet-400 text-white font-semibold px-6 py-3 rounded-lg transition-colors text-sm">
-              <Play size={13} className="fill-current" /> Run demo scan
-            </button>
-            <p className="mt-3 text-xs text-slate-600">About 30 seconds. No signup, no AWS keys.</p>
+
+            <div className="rounded-2xl border border-white/8 bg-[#111116] p-6 sm:p-9">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-violet-400">The scenario</p>
+              <h2 className="mt-1 text-base font-semibold text-slate-100">A small company&apos;s AWS account, with eight things wrong</h2>
+              <p className="mt-2 text-sm text-slate-400 leading-relaxed">
+                On the surface the account looks fine. In reality there is one planted problem in each of the eight services Remedi checks.
+                It is a simulated account, built to be broken:
+              </p>
+              <ul className="mt-4 grid sm:grid-cols-2 gap-2">
+                {PLANTED_PROBLEMS.map(p => (
+                  <li key={p.text} className="flex items-start gap-3 rounded-lg border border-white/6 bg-white/2 px-3 py-2.5 text-xs text-slate-300 leading-relaxed">
+                    <span className="text-sm shrink-0">{p.icon}</span>{p.text}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-4 text-xs text-slate-500 leading-relaxed">
+                There is also an admin user, <span className="font-mono text-slate-400">demo-admin</span>, on the owner&apos;s protected list.
+                Protected users are never touched, whatever the agents think of them.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-white/8 bg-[#111116] p-6 sm:p-9">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-violet-400">What Remedi does about it</p>
+              <ol className="mt-4 space-y-4">
+                {PIPELINE.map((step, i) => (
+                  <li key={step.name} className="flex gap-4">
+                    <span className="w-6 h-6 shrink-0 rounded-full border border-violet-500/30 bg-violet-500/10 text-violet-300 text-xs flex items-center justify-center mt-0.5">{i + 1}</span>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-100">{step.name}</p>
+                      <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{step.what}</p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
           </div>
+        )}
+
+        {scanState !== 'idle' && <Stepper current={phase} done={scanState === 'complete'} />}
+
+        {scanState === 'scanning' && !reporting && (
+          <Narrator label="Step 1 of 5 · Scan" title="Eight agents are auditing the account at once"
+            live={`${doneServices} of ${SERVICE_ORDER.length} services checked${activeService ? ` · now on ${SERVICE_META[activeService].label}` : ''}`}>
+            Each specialist owns one AWS service and has its own tools. They look at how things are configured and report what is wrong.
+            At this stage they can only read, so nothing in the account can change.
+          </Narrator>
+        )}
+        {reporting && (
+          <Narrator label="Step 2 of 5 · Report" title="All eight agents have reported. Now the plan is written">
+            A report step, another AI call, merges the eight sets of findings into one remediation plan and picks the exact fix for each
+            problem. It still hasn&apos;t changed anything.
+          </Narrator>
+        )}
+        {scanState === 'awaiting_approval' && (
+          <Narrator label="Step 3 of 5 · Approve" title="The pipeline is stopped and waiting for you">
+            The plan lists {plan.length} problems, each matched to a fix. Nothing has been changed yet. This pause is enforced in code,
+            not in a prompt, so the AI cannot skip it. In a real scan it waits up to 30 minutes for a decision.
+          </Narrator>
+        )}
+        {scanState === 'remediating' && !allFixed && (
+          <Narrator label="Step 4 of 5 · Fix" title="Approved fixes are running in parallel"
+            live={`${fixedCount} of ${steps.length || plan.length} done`}>
+            Each fix is one specific AWS action, like detaching an admin policy or blocking public access, and each is logged.
+            Here they hit a simulated account, so nothing real is touched.
+          </Narrator>
+        )}
+        {scanState === 'remediating' && allFixed && (
+          <Narrator label="Step 5 of 5 · Verify" title="Now it checks its own work">
+            Every fix reported success, but Remedi does not take that at face value. A verifier re-audits each fixed resource to
+            confirm the problem is really gone. If a fix had not held, this run would end as a failure instead of &quot;secure&quot;.
+          </Narrator>
         )}
 
         {/* ── SCANNING ── */}
@@ -337,6 +426,7 @@ export default function DemoPage() {
                         <span className="text-xs font-mono text-slate-500 bg-white/4 border border-white/8 px-2 py-0.5 rounded">{item.resource}</span>
                       </div>
                       <p className="text-xs text-slate-400 mt-1 leading-relaxed">{reasons[item.resource] || info?.risk || 'Vulnerability detected'}</p>
+                      {info?.does && <p className="text-xs text-slate-500 mt-1.5 leading-relaxed"><span className="text-violet-400/80">Fix:</span> {info.does}</p>}
                     </div>
                   </div>
                 );
@@ -427,10 +517,28 @@ export default function DemoPage() {
               </div>
             </div>
 
-            <div className="rounded-xl border border-white/8 bg-[#111116] p-5 text-sm text-slate-400 leading-relaxed">
-              <p className="text-slate-200 font-medium mb-1">What you just watched</p>
-              A recording of one real run: eight LLM agents, a human approval gate, parallel fixes, and a verifier that re-audits
-              the fixed resources instead of trusting the fix report. Only the AWS side was simulated.
+            <div className="rounded-xl border border-white/8 bg-[#111116] p-5 sm:p-6">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-violet-400">What just happened</p>
+              <ol className="mt-4 space-y-3 text-sm">
+                {[
+                  ['Scan', `Eight agents audited ${totalItems} resources across ${doneServices} services. Read-only, all at once.`],
+                  ['Report', `They found ${plan.length} problems, and each was matched to the exact fix for it.`],
+                  ['Approve', 'The pipeline stopped there. Nothing was changed until you clicked approve.'],
+                  ['Fix', `${fixedCount} fixes ran in parallel, each one logged.`],
+                  ['Verify', verdict === 'verified'
+                    ? 'A verifier re-audited the fixed resources and confirmed every problem was gone.'
+                    : 'The verifier could not confirm every fix, so the run did not count as secure.'],
+                ].map(([name, text], i) => (
+                  <li key={name} className="flex gap-3">
+                    <span className="w-5 h-5 shrink-0 rounded-full border border-violet-500/30 bg-violet-500/10 text-violet-300 text-[10px] flex items-center justify-center mt-0.5">{i + 1}</span>
+                    <p className="text-slate-400 leading-relaxed"><span className="text-slate-200 font-medium">{name}.</span> {text}</p>
+                  </li>
+                ))}
+              </ol>
+              <p className="mt-4 pt-4 border-t border-white/6 text-xs text-slate-500 leading-relaxed">
+                This was a recording of one real run: the agents, prompts, approval gate and verifier are the real pipeline, and only the AWS
+                side was simulated. A bad fix would have shown up here as a failed verification.
+              </p>
               <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs">
                 <a className="text-violet-400 hover:text-violet-300" href="/demo_run.json" target="_blank" rel="noreferrer">Raw recording</a>
                 <a className="text-violet-400 hover:text-violet-300" href={`${REPO}/blob/main/mcp_server/demo_fixtures.py`} target="_blank" rel="noreferrer">Simulated AWS account</a>
@@ -455,6 +563,44 @@ export default function DemoPage() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+// ─── Story components ────────────────────────────────────────────────────────
+
+function Stepper({ current, done }: { current: number; done: boolean }) {
+  return (
+    <ol className="flex flex-wrap items-center gap-x-1.5 gap-y-2 sm:gap-x-2">
+      {PIPELINE.map((step, i) => {
+        const n = i + 1;
+        const state = done || n < current ? 'done' : n === current ? 'current' : 'todo';
+        return (
+          <li key={step.name} className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
+              state === 'current' ? 'border-violet-500/50 bg-violet-500/15 text-violet-200' :
+              state === 'done'    ? 'border-violet-800/40 bg-violet-950/20 text-violet-400' : 'border-white/8 text-slate-600'
+            }`}>
+              {state === 'done' ? <CheckCircle size={11} /> : <span className="text-[10px]">{n}</span>}
+              {step.name}
+            </span>
+            {n < PIPELINE.length && <span className="hidden sm:block w-5 h-px bg-white/10" />}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function Narrator({ label, title, live, children }: {
+  label: string; title: string; live?: string; children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 px-5 py-4">
+      <p className="text-[11px] font-medium uppercase tracking-wider text-violet-400">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-slate-100">{title}</p>
+      <p className="mt-1.5 text-xs text-slate-400 leading-relaxed">{children}</p>
+      {live && <p className="mt-2 text-xs font-mono text-violet-300/80">{live}</p>}
     </div>
   );
 }
