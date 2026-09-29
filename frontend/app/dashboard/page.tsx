@@ -434,8 +434,9 @@ export default function Dashboard() {
           const execMatch = raw.match(/\[EXEC\] Calling (\w+) with \{(.+)\}/);
           if (execMatch) {
             const funcName      = execMatch[1];
-            const resourceMatch = execMatch[2].match(/['"]([\w\-\.]+)['"]/);
-            const resource      = resourceMatch?.[1] || funcName;
+            // args look like {'user_name': 'dev-intern'}: the resource is the value, not the key
+            const quoted        = [...execMatch[2].matchAll(/['"]([\w\-\.]+)['"]/g)];
+            const resource      = quoted[quoted.length - 1]?.[1] || funcName;
             tracker.push({ resource, status: 'running' });
             setScanState('remediating');
             setRemediationSteps(prev => [...prev, { funcName, resource, status: 'running' }]);
