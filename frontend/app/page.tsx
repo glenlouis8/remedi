@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useAuth, useClerk } from '@clerk/nextjs';
-import { ShieldCheck, ArrowRight, CheckCircle, XCircle, AlertTriangle, Shield, Zap, Eye } from 'lucide-react';
+import { ShieldCheck, ArrowRight, CheckCircle, XCircle, AlertTriangle, Shield, Zap, Eye, Play } from 'lucide-react';
 
 const mockFindings = [
   { icon: <XCircle size={13} className="text-red-400 shrink-0" />, label: 'S3 bucket "prod-uploads" is publicly readable', action: 'Block public access', severity: 'CRITICAL' },
@@ -128,10 +128,17 @@ export default function HomePage() {
               >
                 {isSignedIn ? 'Go to dashboard' : 'Scan my AWS account'} <ArrowRight size={16} />
               </Link>
+              <Link
+                href="/demo"
+                className="inline-flex items-center gap-2 text-sm font-medium text-slate-200 border border-white/10 hover:border-violet-500/40 hover:bg-violet-500/5 px-5 py-3 rounded-xl transition-colors"
+              >
+                <Play size={13} className="fill-current text-violet-400" /> Try the demo
+              </Link>
               <Link href="/about" className="inline-flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors px-4 py-3">
                 How it works
               </Link>
             </div>
+            <p className="mt-4 text-xs text-slate-600">The demo needs no signup and no AWS keys.</p>
           </div>
 
           {/* Stats row */}
@@ -240,6 +247,12 @@ export default function HomePage() {
             >
               {isSignedIn ? 'Go to dashboard' : 'Get started free'} <ArrowRight size={16} />
             </Link>
+            <p className="mt-4 text-xs text-slate-600">
+              Just looking?{' '}
+              <Link href="/demo" className="text-slate-400 hover:text-white underline underline-offset-2 transition-colors">
+                Watch a demo scan
+              </Link>
+            </p>
           </div>
 
         </main>
