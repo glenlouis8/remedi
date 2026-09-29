@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:replay": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.0.0",
