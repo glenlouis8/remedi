@@ -49,6 +49,10 @@ r_stream = redis_lib.Redis.from_url(
     health_check_interval=30,
 )
 
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
+
 def _cache_get(key: str):
     try:
         val = r.get(key)
