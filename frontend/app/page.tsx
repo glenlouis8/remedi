@@ -155,6 +155,21 @@ export default function HomePage() {
             ))}
           </div>
 
+          {/* Launch video */}
+          <div className="w-full max-w-3xl mb-20 fade-up delay-4">
+            <div className="bg-[#111116] border border-white/8 rounded-2xl overflow-hidden shadow-2xl shadow-violet-900/20">
+              <video
+                src="/remedi-launch.mp4"
+                poster="/remedi-launch.jpg"
+                controls
+                playsInline
+                preload="metadata"
+                className="w-full aspect-video block"
+              />
+            </div>
+            <p className="text-center mt-3 text-xs text-slate-600">21 seconds · a real run against the simulated demo account</p>
+          </div>
+
           {/* Mock UI */}
           <div className="w-full max-w-3xl mb-28 fade-up delay-4">
             <div className="text-center mb-3">
