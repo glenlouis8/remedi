@@ -161,9 +161,15 @@ export default function HomePage() {
               <video
                 src="/remedi-launch.mp4"
                 poster="/remedi-launch.jpg"
+                // browsers only autoplay muted video; React doesn't always emit the
+                // muted attribute in server HTML, so set it on the element too
+                ref={el => { if (el) { el.muted = true; el.play().catch(() => {}); } }}
+                autoPlay
+                muted
+                loop
                 controls
                 playsInline
-                preload="metadata"
+                preload="auto"
                 className="w-full aspect-video block"
               />
             </div>
