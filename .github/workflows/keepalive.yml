@@ -8,6 +8,13 @@ on:
 jobs:
   ping:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
+      # Render's free tier sleeps when idle and answers the first request with an error
+      # while it boots (about 30 to 60 s). Wait and retry so a wake-up counts as success,
+      # and only a backend that stays down for ~9 minutes fails the run.
       - name: ping backend
-        run: curl -sf https://remedi-yvjz.onrender.com/api/health
+        run: |
+          curl -sS --fail --max-time 90 \
+            --retry 5 --retry-delay 20 --retry-all-errors \
+            https://remedi-yvjz.onrender.com/api/health
