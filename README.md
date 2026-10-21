@@ -1,14 +1,51 @@
+<div align="center">
+
 # Remedi
 
-**AI-powered AWS security scanner and auto-remediator.**
+**AI-powered AWS security scanner that fixes what it finds, after you approve it.**
 
-**Live:** https://remedi-kohl-seven.vercel.app/  ·  **Demo (no signup):** https://remedi-kohl-seven.vercel.app/demo
+<img src="https://img.shields.io/badge/Python-3.12-3776ab?logo=python&logoColor=white" alt="Python"> <img src="https://img.shields.io/badge/LangGraph-agents-1c3c3c" alt="LangGraph"> <img src="https://img.shields.io/badge/MCP-boto3_bridge-8b5cf6" alt="MCP"> <img src="https://img.shields.io/badge/Next.js-15-000000?logo=nextdotjs&logoColor=white" alt="Next.js"> <img src="https://img.shields.io/badge/FastAPI-Celery_+_Redis-009688?logo=fastapi&logoColor=white" alt="FastAPI">
+
+[**Live app**](https://remedi-kohl-seven.vercel.app/) · [**Demo (no signup)**](https://remedi-kohl-seven.vercel.app/demo) · [How it works](#how-it-works) · [Architecture](#architecture) · [Cost](#cost) · [Run it](#try-it)
+
+<img src="assets/hero.jpg" alt="Remedi approval gate listing 9 vulnerabilities with Approve and Cancel buttons" width="860">
+
+<br>
+
+<table>
+<tr>
+<td align="center" width="25%"><b>8</b><br><sub>AWS services, scanned in parallel</sub></td>
+<td align="center" width="25%"><b>8</b><br><sub>CIS benchmark controls tracked</sub></td>
+<td align="center" width="25%"><b>~$0.02</b><br><sub>per full scan (LangSmith)</sub></td>
+<td align="center" width="25%"><b>58</b><br><sub>tests, no external services</sub></td>
+</tr>
+</table>
+
+</div>
+
+---
 
 Remedi scans your AWS account across 8 services, generates a structured findings report, pauses for human approval, then automatically fixes every vulnerability it found. A verification pass confirms the fixes held.
 
-![Landing page](assets/screenshot-landing.jpeg)
-![Dashboard overview](assets/screenshot-dashboard.jpeg)
-![Scan history](assets/screenshot-history.jpeg)
+<table>
+<tr>
+<td width="52%" valign="top">
+
+**Built to be trusted with a real account**
+
+- **Human gate in code.** Nothing changes until you approve. The pause is enforced by the pipeline, not a prompt.
+- **Protected users.** Chosen IAM users, plus the one whose credentials are in use, are never touched.
+- **Verified fixes.** The verifier re-audits only what was remediated.
+- **Encrypted credentials.** Fernet at rest, 30-minute inactivity purge, wiped on sign-out.
+
+</td>
+<td width="48%" valign="top">
+
+<img src="assets/landing.jpg" alt="Remedi landing page" width="100%">
+
+</td>
+</tr>
+</table>
 
 ---
 
@@ -45,34 +82,15 @@ orchestrator → report_generator → safety_gate ─[your approval]─► remed
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────┐
-│                   frontend/                       │
-└───────────────────┬──────────────────────────────┘
-                    │ HTTP / SSE
-┌───────────────────▼──────────────────────────────┐
-│                  server.py                        │
-│         FastAPI · Clerk JWT auth                  │
-│   Fernet encryption · PostgreSQL · Redis cache    │
-└───────────────────┬──────────────────────────────┘
-                    │ Celery task dispatch (Redis broker)
-┌───────────────────▼──────────────────────────────┐
-│                  worker.py                        │
-│   Celery worker · spawns main.py per scan         │
-│   streams output over Redis pub/sub (XADD/XREAD)  │
-└───────────────────┬──────────────────────────────┘
-                    │ subprocess (stdin/stdout)
-┌───────────────────▼──────────────────────────────┐
-│                   main.py                         │
-│         LangGraph agent pipeline (5 phases)       │
-│   orchestrator · report_generator · safety_gate   │
-│           remediator · verifier                   │
-└───────────────────┬──────────────────────────────┘
-                    │ MCP JSON-RPC over stdio
-┌───────────────────▼──────────────────────────────┐
-│             mcp_server/main.py                    │
-│         FastMCP · boto3 · All AWS API calls       │
-└──────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    FE["Next.js frontend<br/>Clerk auth"] -->|"HTTP / SSE"| API["server.py<br/>FastAPI, Fernet, Postgres, Redis cache"]
+    API -->|"Celery task (Redis broker)"| W["worker.py<br/>Celery worker"]
+    W -->|"subprocess stdin/stdout"| M["main.py<br/>LangGraph pipeline"]
+    W -.->|"XADD scan stream"| R[("Redis")]
+    R -.->|"XREAD, SSE"| API
+    M -->|"MCP JSON-RPC over stdio"| MCP["mcp_server/main.py<br/>FastMCP + boto3"]
+    MCP --> AWS[("AWS account")]
 ```
 
 **Key design decisions:**
@@ -187,6 +205,9 @@ uv add pytest "moto[s3,iam,ec2,rds,cloudtrail,logs]" httpx --dev
 .venv/bin/python -m pytest tests/ -v
 ```
 
+<details>
+<summary><b>Per-test breakdown</b></summary>
+
 **`tests/test_accounts.py`** — Fernet credential encryption
 
 | Test | What it verifies |
@@ -233,6 +254,8 @@ uv add pytest "moto[s3,iam,ec2,rds,cloudtrail,logs]" httpx --dev
 **`tests/test_scan_status.py`** — the UI's scan events and the verifier's verdict must match what happened: clean security groups and stopped instances emit `ok`, and a refused or failed fix can't be reported as "all secure".
 
 **`tests/test_demo_recording.py`** — the recorded demo is well-formed, leaks no local details, and matches the simulated account.
+
+</details>
 
 **Result: 58 passed, 1 xfailed (expected — moto limitation)**
 
