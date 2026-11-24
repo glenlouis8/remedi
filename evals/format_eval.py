@@ -5,7 +5,7 @@ Feeds frozen specialist audit text to the real report generator prompt (live
 Gemini call, no AWS, no DB, no MCP subprocess) and checks the output against
 the remediator's real regex. Scores per case:
   - format:   every non-empty line is a 🔴 plan line, a ⚠️ [MANUAL] line, or the SECURE line
-  - exact:    parsed (resource, tool) pairs == expected pairs (multiset)
+  - exact:    parsed (resource, tool, severity) == expected, severity must equal the audit's
   - secure:   clean account -> exactly the SYSTEM SECURE line
 
 Run:  uv run python evals/format_eval.py [--runs 3] [--case NAME]
@@ -30,7 +30,10 @@ sys.modules["mcp_server.database"] = MagicMock()
 
 from langchain_core.messages import AIMessage  # noqa: E402
 from agents import nodes  # noqa: E402
-from agents.patterns import REMEDIATION_LINE_PATTERN  # noqa: E402
+from agents.patterns import REMEDIATION_LINE_PATTERN, FINDING_PATTERN  # noqa: E402
+import re  # noqa: E402
+
+SEVERITY_RE = re.compile(r"🔴 \[(CRITICAL|HIGH)\]")
 
 SECURE_LINE = "✅ SYSTEM SECURE. No remediation actions required."
 
@@ -41,8 +44,15 @@ def score(output: str, case: dict) -> dict:
         l for l in lines
         if not (REMEDIATION_LINE_PATTERN.search(l) or l.startswith("⚠️ [MANUAL]") or "SYSTEM SECURE" in l)
     ]
-    parsed = Counter(REMEDIATION_LINE_PATTERN.findall(output))
-    expected = Counter(tuple(p) for p in case["expected"])
+    # severity the audit gave each resource; the report must keep it unchanged
+    audit_sev = {m.group(1).strip(): m.group(2).upper() for m in FINDING_PATTERN.finditer(case["audit"])}
+    parsed = Counter()
+    for l in lines:
+        m = REMEDIATION_LINE_PATTERN.search(l)
+        sev = SEVERITY_RE.search(l)
+        if m:
+            parsed[(m.group(1), m.group(2), sev.group(1).upper() if sev else "?")] += 1
+    expected = Counter((r, t, audit_sev.get(r, "?")) for r, t in case["expected"])
     return {
         "format": not bad_lines,
         "exact": parsed == expected,
