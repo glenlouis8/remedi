@@ -37,7 +37,7 @@ def _get_protected_clause(for_report=False):
     )
 
 
-llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0)
+llm = ChatGoogleGenerativeAI(model="gemini-3.8-flash", temperature=0)
 
 # --- LOAD TOOLS VIA MCP PROTOCOL ---
 # Tools are served by mcp_server/main.py running as a subprocess.

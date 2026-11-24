@@ -67,3 +67,8 @@ docs/
 INTERVIEW_PREP.md
 
 INTERVIEW_RECAP.md
+# Local tooling / generated artifacts
+.taste-skill/
+brag-output/
+tfplan
+*.tfplan
