@@ -585,7 +585,15 @@ def audit_ec2_vulnerabilities() -> list:
                 encrypted = None  # None = root device mapping not in the response
                 for bdm in inst.get("BlockDeviceMappings", []):
                     if bdm["DeviceName"] == root_dev:
-                        encrypted = bdm.get("Ebs", {}).get("Encrypted", False)
+                        # describe_instances does NOT return an Encrypted flag in the
+                        # block device mapping, so defaulting a missing key to False
+                        # flagged every instance. Ask the volume itself.
+                        vol_id = bdm.get("Ebs", {}).get("VolumeId")
+                        try:
+                            vol = ec2.describe_volumes(VolumeIds=[vol_id])["Volumes"][0]
+                            encrypted = bool(vol["Encrypted"])
+                        except Exception:
+                            encrypted = None  # unknown, don't flag
 
                 issues = []
                 if imds_status == "optional":

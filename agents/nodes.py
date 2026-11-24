@@ -790,7 +790,11 @@ def verifier_agent(state: AgentState):
         }
 
     context = messages[report_idx:]
-    response = audit_llm.invoke([system_msg] + context)
+    # Gemini rejects a conversation that ends on a model turn ("Requests ending
+    # with a model turn are not supported"). On the first pass the last message is
+    # the remediator's own AIMessage report, so end with a user turn.
+    nudge = HumanMessage(content="Verify the fixes now by re-running the audit tools.")
+    response = audit_llm.invoke([system_msg] + context + [nudge])
 
     scan_id = state.get("scan_id", "UNKNOWN")
 
@@ -800,14 +804,14 @@ def verifier_agent(state: AgentState):
     audited = any(isinstance(m, ToolMessage) for m in context)
     if not audited and not getattr(response, "tool_calls", None):
         print("--- [VERIFIER] No audit tools run — forcing re-audit ---")
-        forced = SystemMessage(
+        forced = HumanMessage(
             content=(
                 "You did not call any audit tool. You CANNOT confirm anything "
                 "without re-auditing. Call the relevant audit tool now for each "
                 "resource named in the remediation report."
             )
         )
-        response = audit_llm.invoke([system_msg] + context + [forced])
+        response = audit_llm.invoke([system_msg] + context + [nudge, forced])
 
     verdict_ok = "MISSION ACCOMPLISHED" in str(response.content)
 
