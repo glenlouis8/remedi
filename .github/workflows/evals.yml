@@ -1,0 +1,31 @@
+name: llm-evals
+
+# Only the evals that need Gemini and nothing else (no AWS, no DB).
+# detection_eval and fix_eval need live AWS + terraform, so they stay manual.
+on:
+  pull_request:
+    paths:
+      - "agents/**"
+      - "evals/**"
+      - "mcp_server/**"
+  workflow_dispatch:
+
+jobs:
+  llm-evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      # judgment_eval imports the MCP module, which builds boto3 clients. Dummy
+      # values only, no AWS call is made.
+      AWS_ACCESS_KEY_ID: dummy
+      AWS_SECRET_ACCESS_KEY: dummy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - name: report generator format eval
+        run: uv run python evals/format_eval.py
+      - name: judgment eval
+        run: uv run python evals/judgment_eval.py
